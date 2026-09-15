@@ -51,6 +51,16 @@ jobs:
         shell: pwsh
         run: ./Source/Injector/build.ps1
 
+      - name: Run injector self-test
+        shell: pwsh
+        run: |
+          & './Pegasus.exe' --self-test
+          if ($LASTEXITCODE -ne 0) { throw "Pegasus self-test exited with code $LASTEXITCODE" }
+          if (!(Test-Path './self-test-result.txt')) { throw 'Pegasus self-test did not produce a result file.' }
+          $result = Get-Content './self-test-result.txt' -Raw
+          Write-Host $result
+          if (!$result.StartsWith('PASS:')) { throw "Pegasus self-test failed: $result" }
+
       - name: Verify package files
         shell: pwsh
         run: |
@@ -63,6 +73,7 @@ jobs:
           Copy-Item './BUILDING.md' './artifact/Pegasus/'
           Copy-Item './BEDROCK_26_50.md' './artifact/Pegasus/'
           Copy-Item './TESTING_26_50.md' './artifact/Pegasus/'
+          Copy-Item './self-test-result.txt' './artifact/Pegasus/'
           Copy-Item './tools/check-bedrock-compat.ps1' './artifact/Pegasus/tools/'
           Get-FileHash './artifact/Pegasus/Pegasus.exe' -Algorithm SHA256 | Format-List
           Get-FileHash './artifact/Pegasus/BedrockUtilityFramework.Xray.dll' -Algorithm SHA256 | Format-List
