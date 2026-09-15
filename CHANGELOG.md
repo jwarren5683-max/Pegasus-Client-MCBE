@@ -1,5 +1,19 @@
 # Changelog
 
+## Minecraft Bedrock 26.50 compatibility foundation — 2026-09-15
+
+- Recognizes the installed Minecraft `1.26.5101.0` executable exactly (`0x6AA482FD`, image size `0x12C01000`).
+- Combined the earlier 26.50 preparation work with the enhanced Reach, Trigger Bot, remote-session safety, and Auto Leave source instead of replacing either branch.
+- Added a read-only in-process compatibility probe that records candidate 26.50 native RVAs without installing unverified hooks.
+- Added a standalone read-only compatibility scanner and GitHub Release build packaging.
+- Kept unsupported native modules fail-closed while preserving the working injector and overlay.
+
+### Verification
+
+- 18 of 18 automated tests passed, including exact 1.26.45/1.26.50 profile classification.
+- The rebuilt injector verified the DLL hash and loaded it into a disposable x64 test process without touching Minecraft.
+- Live 1.26.50 module targets still require a fresh-session probe run before any native feature is marked compatible.
+
 ## Auto Leave health safety module — 2026-09-15
 
 - Added **Auto Leave** under Combat with a 0.5–10 heart slider, a 4-heart default, and half-heart steps.

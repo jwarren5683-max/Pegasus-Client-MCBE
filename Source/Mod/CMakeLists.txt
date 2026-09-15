@@ -28,6 +28,7 @@ add_library(BedrockUtilityFramework SHARED
     src/framework/ModuleManager.cpp
     src/framework/Commands.cpp
     src/integration/ChatCommands.cpp
+    src/integration/CompatibilityProbe.cpp
     src/framework/Config.cpp
     src/integration/SplashTextHook.cpp
     src/integration/Renderer.cpp
@@ -120,6 +121,21 @@ if(BUF_BUILD_RESEARCH_PROBES)
 endif()
 
 option(BUF_BUILD_SMOKE_HOST "Build the authorized self-loading smoke-test host" ON)
+option(BUF_BUILD_COMPAT_SCANNER "Build the read-only Bedrock compatibility scanner" ON)
+
+if(BUF_BUILD_COMPAT_SCANNER)
+    add_executable(BedrockCompatibilityScanner ../../tools/bedrock-memory-scan.cpp)
+    target_compile_features(BedrockCompatibilityScanner PRIVATE cxx_std_20)
+    target_compile_definitions(BedrockCompatibilityScanner PRIVATE
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+        UNICODE
+        _UNICODE
+    )
+    if(MSVC)
+        target_compile_options(BedrockCompatibilityScanner PRIVATE /W4 /permissive- /EHsc)
+    endif()
+endif()
 
 if(BUF_BUILD_SMOKE_HOST)
     add_executable(BedrockUtilitySmokeHost tests/smoke_host.cpp)
@@ -151,6 +167,10 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(BedrockUtilityBuildProfileTest tests/bedrock_build_test.cpp)
+    target_compile_features(BedrockUtilityBuildProfileTest PRIVATE cxx_std_20)
+    target_compile_definitions(BedrockUtilityBuildProfileTest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+    add_test(NAME bedrock_build_profile COMMAND BedrockUtilityBuildProfileTest)
     add_executable(PegasusSplashTextTest tests/splash_text_test.cpp)
     target_compile_features(PegasusSplashTextTest PRIVATE cxx_std_20)
     target_compile_definitions(PegasusSplashTextTest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)

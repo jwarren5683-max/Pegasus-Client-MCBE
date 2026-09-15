@@ -1,7 +1,9 @@
 #include "Framework.hpp"
 
 #include "Logger.hpp"
+#include "../integration/BedrockBuild.hpp"
 #include "../integration/ChatCommands.hpp"
+#include "../integration/CompatibilityProbe.hpp"
 #include "../modules/AntiKnockbackModule.hpp"
 #include "../modules/CriticalsModule.hpp"
 #include "../modules/XrayModule.hpp"
@@ -14,6 +16,8 @@
 #include "../modules/BaritoneModule.hpp"
 
 #include <memory>
+#include <iomanip>
+#include <sstream>
 
 namespace utility {
 
@@ -37,6 +41,18 @@ bool Framework::initialize(HMODULE module) noexcept {
     }
 
     Logger::instance().info("BedrockUtilityFramework loaded successfully.");
+    const auto build = integration::current_bedrock_build();
+    {
+        std::ostringstream message;
+        message << "Minecraft executable profile: PE timestamp 0x" << std::uppercase << std::hex
+            << std::setw(8) << std::setfill('0') << build.timestamp << ", SizeOfImage 0x"
+            << std::setw(8) << build.image_size;
+        if (integration::is_release_12650(build)) message << " (Minecraft 1.26.5101.0 recognized; native targets pending validation).";
+        else if (integration::is_release_12645(build)) message << " (Minecraft 1.26.4501.0 legacy profile).";
+        else message << " (unsupported profile).";
+        Logger::instance().info(message.str());
+    }
+    integration::run_compatibility_probe();
     if (splash_text_hook_.install()) {
         Logger::instance().info("Native splash-text hook installed; replacement is 'made by Roundomegaboi'.");
     } else {

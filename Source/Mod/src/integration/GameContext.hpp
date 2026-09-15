@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "BedrockBuild.hpp"
+
 namespace utility::integration {
 
 namespace game_context_detail {
@@ -43,6 +45,9 @@ inline void observe_game_mode(void* game_mode) noexcept {
     }
     HMODULE image = GetModuleHandleW(nullptr);
     if (image == nullptr) {
+        return;
+    }
+    if (!is_release_12645(current_bedrock_build())) {
         return;
     }
     const auto table = reinterpret_cast<std::uintptr_t>(*reinterpret_cast<void**>(candidate));

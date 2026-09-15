@@ -15,7 +15,7 @@ using System.Windows.Forms;
 
 internal static class Program {
     internal const string DllName = "BedrockUtilityFramework.Xray.dll";
-    internal const string ExpectedHash = "52A2F98A40B0FD56971A2D06996DA0D5E0B0F23530C43D806CE5672C051AE7C5";
+    internal const string ExpectedHash = "37477FBF97724906A8E6FCE2AB15A67796670ABF96EEDA3184CF8C1EDD1F7FD9";
     internal static string DllPath { get { return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, DllName); } }
     [STAThread] static int Main(string[] args) {
         if (args.Length == 1 && args[0] == "--test-host") { Thread.Sleep(30000); return 0; }
@@ -90,7 +90,7 @@ internal sealed class PegasusForm : Form {
         public override string ToString() { return Name + "   /   PID " + Id; }
     }
     internal PegasusForm() {
-        Text = "Pegasus Enhanced | reach up to 10";
+        Text = "Pegasus Enhanced | Minecraft 26.50 repair";
         ClientSize = new Size(580, 490); FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false; StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(15, 17, 27); ForeColor = Color.White;

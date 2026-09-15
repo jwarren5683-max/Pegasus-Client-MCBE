@@ -2,6 +2,8 @@
 
 Source and matching Windows binaries for the enhanced Pegasus utility mod and its desktop injector. See [BUILDING.md](BUILDING.md) for build and verification instructions and [CHANGELOG.md](CHANGELOG.md) for tested updates.
 
+Minecraft `1.26.5101.0` (Bedrock 26.50) is now recognized by an exact executable profile. The overlay, injector, build pipeline, safety gates, and existing module source are preserved. Version-sensitive native modules remain `N/A` until their 26.50 targets are verified; this repair build records read-only signature evidence in the framework log instead of reusing 1.26.45 addresses.
+
 ## Notes
 
 - Entity and block reach can be adjusted from 3 to 10 blocks in 0.5-block steps. The default remains 7.
@@ -19,7 +21,7 @@ Source and matching Windows binaries for the enhanced Pegasus utility mod and it
 ## Start
 
 1. Keep `Pegasus.exe` and `BedrockUtilityFramework.Xray.dll` together in this folder.
-2. Start a fresh Minecraft Bedrock 64-bit session. Native hooks are signature-gated and were verified against Minecraft 1.26.4501.0.
+2. Start a fresh Minecraft Bedrock 64-bit session. Native hooks remain signature-gated. Minecraft 1.26.4501.0 is the last fully verified native profile; 1.26.5101.0 is recognized and under active staged repair.
 3. Open `Pegasus.exe`. Select your game session, then choose **Load utility mod**. Use Refresh if you started Minecraft afterward.
 4. In a Minecraft world, press **Tab** for the menu (clickgui) or use the arrow keys to activate modules.
 
@@ -28,7 +30,7 @@ Restart Minecraft before loading again or switching DLL versions.
 ## Requirements
 
 - Windows 10/11 x64, with .NET Framework 4.8 for the injector.
-- The bundled DLL depends on the x64 Visual Studio C++ debug runtimes: `MSVCP140D.dll`, `VCRUNTIME140D.dll`, `VCRUNTIME140_1D.dll`, and `ucrtbased.dll`. These come with the C++ development tools and are not included here. The normal Visual C++ Redistributable alone does not supply them.
+- Release builds use the standard x64 Visual C++ runtime. GitHub artifacts are built in Release configuration so they do not require the developer-only debug runtime.
 - The game must be able to read this folder. The injector grants packaged applications read/execute access to the bundled DLL only. A restricted parent folder can still prevent loading; use an accessible local folder if needed.
 - If access is denied, run Pegasus with the same privilege level as Minecraft or administrator privledges.
 
@@ -40,7 +42,7 @@ Restart Minecraft before loading again or switching DLL versions.
 - `Source/Mod`: full current C++ module source, tests, CMake configuration, and optional probe sources referenced by that configuration.
 - `SHA256SUMS.txt`: checksums provided alongside the downloadable release assets.
 
-The checked-in DLL is built from the current source represented by this update. Baritone/navigation remains unavailable because its required native interfaces have not been verified.
+The checked-in DLL is built from the current source represented by this update. Baritone/navigation and other version-sensitive features remain unavailable on 1.26.5101.0 until their required native interfaces have been verified.
 
 ## Build the injector
 
@@ -58,9 +60,9 @@ Requires Visual Studio 2022 with Desktop development with C++, a Windows SDK, an
 
 ```powershell
 cmake -S '.\Source\Mod' -B C:/pegasus-build -G 'Visual Studio 17 2022' -A x64
-cmake --build C:/pegasus-build --config Debug
-ctest --test-dir C:/pegasus-build -C Debug --output-on-failure
+cmake --build C:/pegasus-build --config Release
+ctest --test-dir C:/pegasus-build -C Release --output-on-failure
 ```
 
-The output is `C:/pegasus-build/Debug/BedrockUtilityFramework.Xray.dll`. Update the injector's pinned hash and rebuild the injector whenever replacing this DLL.
+The output is `C:/pegasus-build/Release/BedrockUtilityFramework.Xray.dll`. Update the injector's pinned hash and rebuild the injector whenever replacing this DLL.
 
