@@ -33,6 +33,7 @@ public:
     void on_register(EventBus&) override;
     void on_enable() override;
     void on_disable() override;
+    void on_tick() noexcept override;
 
     [[nodiscard]] static constexpr bool valuable(std::string_view identifier) noexcept {
         for (const auto ore : ores) {
@@ -95,3 +96,4 @@ private:
 };
 
 } // namespace utility::modules
+

@@ -1,5 +1,13 @@
 # Changelog
 
+## Minecraft Bedrock 26.50 ESP and X-ray repair — 2026-09-15
+
+- Added a 26.50 ESP path that resolves Bedrock's uniquely matched, thread-safe runtime actor-list function instead of iterating the shared entity registry from the overlay thread.
+- Reuses the byte-verified Reach/GameMode path to observe the current local player, with structural pointer and executable-image validation.
+- Added adaptive 26.50 BlockGraphics discovery for X-ray. The registry, object vtable, block identifiers, air, stone, and the complete ore set must validate before the module becomes available.
+- Kept the old 1.26.45 hooks unchanged and left unrelated unverified gameplay modules fail-closed.
+- On 26.50, X-ray affects newly rebuilt chunk meshes; existing meshes refresh as Bedrock rebuilds them during movement or world reload.
+
 ## Minecraft Bedrock 26.50 verified Reach restoration — 2026-09-15
 
 - Connected the exact 1.26.50 Reach and maximum-range functions found by the live compatibility probe.
