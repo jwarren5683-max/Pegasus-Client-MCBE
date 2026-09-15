@@ -5,19 +5,47 @@ $knownTimestamp = [uint32]0x6A8378BA
 $knownImageSize = [uint32]0x12888000
 
 $process = Get-Process -Name 'Minecraft.Windows' -ErrorAction SilentlyContinue | Select-Object -First 1
-if (-not $process) {
-    Write-Host 'Minecraft Bedrock is not running.' -ForegroundColor Yellow
-    Write-Host 'Open Minecraft, reach the title screen, then run this script again.'
-    exit 2
+$package = $null
+$exePath = $null
+$fileVersion = $null
+$packageVersion = $null
+
+if ($process) {
+    try {
+        $module = $process.MainModule
+        $exePath = $module.FileName
+        $fileVersion = $module.FileVersionInfo.FileVersion
+    } catch {
+        Write-Host 'Could not read the running Minecraft process metadata; trying the installed package instead.' -ForegroundColor Yellow
+    }
 }
 
+# Modern Bedrock is an AppX/MSIX package. This fallback makes the report usable
+# without asking the user to launch Minecraft first.
 try {
-    $module = $process.MainModule
-    $exePath = $module.FileName
-    $fileVersion = $module.FileVersionInfo.FileVersion
+    $package = Get-AppxPackage -Name 'Microsoft.MinecraftUWP' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $package) {
+        $package = Get-AppxPackage | Where-Object { $_.Name -like '*Minecraft*' -and $_.InstallLocation } | Select-Object -First 1
+    }
+
+    if ($package) {
+        $packageVersion = $package.Version.ToString()
+        if (-not $exePath) {
+            $candidate = Join-Path $package.InstallLocation 'Minecraft.Windows.exe'
+            if (Test-Path -LiteralPath $candidate) {
+                $exePath = $candidate
+                $fileVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($exePath).FileVersion
+            }
+        }
+    }
 } catch {
-    Write-Host 'Could not read Minecraft process metadata. Try PowerShell with the same permissions as Minecraft.' -ForegroundColor Red
-    throw
+    Write-Host 'Installed-package lookup was unavailable.' -ForegroundColor Yellow
+}
+
+if (-not $exePath -or -not (Test-Path -LiteralPath $exePath)) {
+    Write-Host 'Minecraft Bedrock was found neither as a readable running process nor as a readable installed package.' -ForegroundColor Red
+    Write-Host 'If Minecraft is installed, launch it once and rerun this script.'
+    exit 2
 }
 
 $stream = [System.IO.File]::Open($exePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
@@ -43,12 +71,14 @@ try {
     $stream.Dispose()
 }
 
-$hash = (Get-FileHash -Path $exePath -Algorithm SHA256).Hash
+$hash = (Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash
 $exactLegacyProfile = ($timestamp -eq $knownTimestamp -and $imageSize -eq $knownImageSize)
 
 Write-Host ''
 Write-Host 'Pegasus / Minecraft Bedrock compatibility report' -ForegroundColor Cyan
-Write-Host ('Process ID       : {0}' -f $process.Id)
+if ($process) { Write-Host ('Process ID       : {0}' -f $process.Id) }
+if ($package) { Write-Host ('Package          : {0}' -f $package.PackageFullName) }
+if ($packageVersion) { Write-Host ('Package version  : {0}' -f $packageVersion) }
 Write-Host ('Executable       : {0}' -f $exePath)
 Write-Host ('File version     : {0}' -f $fileVersion)
 Write-Host ('PE timestamp     : 0x{0:X8}' -f $timestamp)
@@ -63,5 +93,5 @@ if ($exactLegacyProfile) {
 }
 
 Write-Host 'RESULT: This executable does NOT match the Pegasus 1.26.4501.0 native-hook profile.' -ForegroundColor Yellow
-Write-Host 'Do not copy old RVAs into the new profile. Capture/validate the updated signatures before enabling native modules.'
+Write-Host 'Native modules must remain disabled until the new build-specific targets are validated.'
 exit 1
