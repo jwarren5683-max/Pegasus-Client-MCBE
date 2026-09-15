@@ -1,12 +1,14 @@
 #include "GameplayModules.hpp"
 #include "EspProjection.hpp"
 #include "TriggerbotPolicy.hpp"
+#include "AutoLeavePolicy.hpp"
 #include "AirjumpPolicy.hpp"
 #include "JetpackPolicy.hpp"
 #include "ChestEspContainers.hpp"
 #include "../integration/GameContext.hpp"
 #include "../integration/NavigationBridge.hpp"
 #include "../integration/ServerSafety.hpp"
+#include "../integration/NavigationNativeLayout.hpp"
 #include "../framework/Logger.hpp"
 #include <TlHelp32.h>
 #include <algorithm>
@@ -36,6 +38,9 @@ std::atomic<float> jetpack_speed{jetpack::default_speed};
 std::atomic<unsigned> jetpack_revision{};
 std::atomic_bool jetpack_ready{};
 std::atomic<unsigned> trigger_revision{};
+std::atomic<float> auto_leave_hearts{auto_leave::default_hearts};
+std::atomic<unsigned> auto_leave_revision{};
+auto_leave::Gate auto_leave_gate;
 unsigned key_bit(unsigned code) {
     switch(code) { case 'W': return 1; case 'S': return 2; case 'A': return 4; case 'D': return 8; case VK_SPACE: return 16; default: return 0; }
 }
@@ -57,18 +62,76 @@ Immune original_immune{};
 StartMining original_start{}, original_creative_start{};
 ContinueMining original_continue{};
 
-bool on(GameplayFeature feature) {
-    if(integration::server_safety::remote_session()) return false;
-    if(integration::navigation_owns_controls.load() &&
-       (feature==GameplayFeature::autotool||feature==GameplayFeature::phase||feature==GameplayFeature::airjump||
-        feature==GameplayFeature::autosprint||feature==GameplayFeature::triggerbot||feature==GameplayFeature::jetpack))return false;
-    return flags[static_cast<unsigned>(feature)].load();
-}
 template<class T> T read(const void* object, std::size_t offset = 0) {
     T result{};
     if (object && integration::readable_game_memory(static_cast<const Byte*>(object) + offset, sizeof(T)))
         std::memcpy(&result, static_cast<const Byte*>(object) + offset, sizeof(T));
     return result;
+}
+void release_trigger_mouse();
+
+bool on(GameplayFeature feature) {
+    if(integration::server_safety::remote_session() && feature!=GameplayFeature::auto_leave) return false;
+    if(integration::navigation_owns_controls.load() &&
+       (feature==GameplayFeature::autotool||feature==GameplayFeature::phase||feature==GameplayFeature::airjump||
+        feature==GameplayFeature::autosprint||feature==GameplayFeature::triggerbot||feature==GameplayFeature::jetpack))return false;
+    return flags[static_cast<unsigned>(feature)].load();
+}
+
+bool current_health(void* player,float& health) {
+    const auto copy=[](std::uintptr_t at,void* output,std::size_t size) {
+        if(!integration::readable_game_memory(reinterpret_cast<void*>(at),size))return false;
+        std::memcpy(output,reinterpret_cast<void*>(at),size);return true;
+    };
+    const auto attributes=integration::navigation_native::component(
+        read<std::uintptr_t>(player,0x10),read<std::uint32_t>(player,0x18),
+        integration::navigation_native::attributes_hash,
+        integration::navigation_native::attributes_size,copy);
+    const auto key=read<std::uint32_t>(image,integration::navigation_native::health_definition+4);
+    return key && integration::navigation_native::attribute(attributes,key,health,copy) &&
+        std::isfinite(health) && health>=0.0F && health<=20.0F;
+}
+
+bool executable_game_code(const void* address) {
+    MEMORY_BASIC_INFORMATION information{};
+    if(!address||!VirtualQuery(address,&information,sizeof(information))||
+       information.State!=MEM_COMMIT||information.Type!=MEM_IMAGE||information.AllocationBase!=image)return false;
+    constexpr DWORD executable=PAGE_EXECUTE|PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY;
+    return (information.Protect&executable)!=0 && (information.Protect&PAGE_GUARD)==0;
+}
+
+// IClientInstance::requestLeaveGameAsync is vtable slot 14 in the supported
+// Bedrock interface. It schedules the normal save/disconnect lifecycle and
+// returns immediately; it does not terminate Minecraft or forge packets.
+bool request_leave_game_async(void* player) noexcept {
+    using RequestLeave=void(__fastcall*)(void*);
+    auto* client=read<void*>(player,0xD70);
+    auto* table=read<void**>(client);
+    auto request=read<RequestLeave>(table,14*sizeof(void*));
+    if(!client||!table||!executable_game_code(read<void*>(table))||
+       !executable_game_code(reinterpret_cast<void*>(request)))return false;
+#if defined(_MSC_VER)
+    __try { request(client); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+#else
+    request(client);
+#endif
+    return true;
+}
+
+void auto_leave_tick(void* player,bool new_player) {
+    static unsigned revision{};
+    const auto current_revision=auto_leave_revision.load();
+    if(new_player||revision!=current_revision){auto_leave_gate.reset();revision=current_revision;}
+    float health{};
+    const bool valid=current_health(player,health);
+    if(!auto_leave_gate.update(health,auto_leave_hearts.load(),on(GameplayFeature::auto_leave)&&valid))return;
+    release_trigger_mouse();pending_keys=0;airjump_requests.reset();
+    char message[160]{};
+    std::snprintf(message,sizeof(message),"Auto Leave requested at %.1f hearts (threshold %.1f).",
+        static_cast<double>(health/2.0F),static_cast<double>(auto_leave_hearts.load()));
+    Logger::instance().info(message);
+    if(!request_leave_game_async(player))Logger::instance().info("Auto Leave failed closed: leave-game interface validation failed.");
 }
 template<class Function> Function native(std::uintptr_t rva) { return reinterpret_cast<Function>(image + rva); }
 template<class Function> Function method(void* object, std::size_t slot) {
@@ -551,6 +614,7 @@ void tick_features(void* player,Vec3 before,bool alive_before) {
         }
     }
     if(pending_clipboard[0] && copy_clipboard(pending_clipboard))pending_clipboard[0]=0;
+    auto_leave_tick(player,changed);
     const bool control=alive && controls_active();
     triggerbot_tick(player,control);
     const auto pressed=pending_keys.exchange(0);
@@ -779,11 +843,11 @@ void initialize() {
 }
 
 std::string_view GameplayModule::name() const noexcept {
-    constexpr std::string_view names[]{"ESP","Autotool","Phase","Airjump","deathposition","autosprint","ChestESP","triggerbot","Jetpack"};
+    constexpr std::string_view names[]{"ESP","Autotool","Phase","Airjump","deathposition","autosprint","ChestESP","triggerbot","Jetpack","Auto Leave"};
     return names[static_cast<unsigned>(feature_)];
 }
 ModuleCategory GameplayModule::category() const noexcept {
-    switch(feature_){case GameplayFeature::triggerbot:return ModuleCategory::combat;
+    switch(feature_){case GameplayFeature::triggerbot:case GameplayFeature::auto_leave:return ModuleCategory::combat;
     case GameplayFeature::esp:case GameplayFeature::chest_esp:return ModuleCategory::visual;
     case GameplayFeature::autotool:case GameplayFeature::deathposition:return ModuleCategory::player;
     default:return ModuleCategory::movement;}
@@ -793,19 +857,21 @@ bool GameplayModule::available() const noexcept {
         (feature_!=GameplayFeature::airjump || airjump_ready.load()) && (feature_!=GameplayFeature::triggerbot ||
         (trigger_ready.load() && integration::game_context_detail::picker_ready.load()));
 }
+bool GameplayModule::allowed_on_remote_server() const noexcept { return feature_==GameplayFeature::auto_leave; }
 void GameplayModule::on_register(EventBus&) { initialize(); }
-void GameplayModule::on_enable() { if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;Logger::instance().info("Trigger Bot enabled for local-world input delivery.");} flags[static_cast<unsigned>(feature_)]=true; }
-void GameplayModule::on_disable() { flags[static_cast<unsigned>(feature_)]=false; if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;release_trigger_mouse();Logger::instance().info("Trigger Bot disabled.");} }
-bool GameplayModule::has_value() const noexcept { return feature_==GameplayFeature::jetpack; }
-std::string_view GameplayModule::value_label() const noexcept { return "Speed"; }
-std::string_view GameplayModule::value_suffix() const noexcept { return " blocks/s"; }
-float GameplayModule::value() const noexcept { return has_value()?jetpack_speed.load():0.0F; }
-float GameplayModule::minimum_value() const noexcept { return has_value()?jetpack::minimum_speed:0.0F; }
-float GameplayModule::maximum_value() const noexcept { return has_value()?jetpack::maximum_speed:0.0F; }
+void GameplayModule::on_enable() { if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;Logger::instance().info("Trigger Bot enabled for local-world input delivery.");} if(feature_==GameplayFeature::auto_leave){++auto_leave_revision;Logger::instance().info("Auto Leave enabled.");} flags[static_cast<unsigned>(feature_)]=true; }
+void GameplayModule::on_disable() { flags[static_cast<unsigned>(feature_)]=false; if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;release_trigger_mouse();Logger::instance().info("Trigger Bot disabled.");} if(feature_==GameplayFeature::auto_leave)++auto_leave_revision; }
+bool GameplayModule::has_value() const noexcept { return feature_==GameplayFeature::jetpack||feature_==GameplayFeature::auto_leave; }
+std::string_view GameplayModule::value_label() const noexcept { return feature_==GameplayFeature::auto_leave?"Leave at":"Speed"; }
+std::string_view GameplayModule::value_suffix() const noexcept { return feature_==GameplayFeature::auto_leave?" hearts":" blocks/s"; }
+float GameplayModule::value() const noexcept { return feature_==GameplayFeature::auto_leave?auto_leave_hearts.load():feature_==GameplayFeature::jetpack?jetpack_speed.load():0.0F; }
+float GameplayModule::minimum_value() const noexcept { return feature_==GameplayFeature::auto_leave?auto_leave::minimum_hearts:feature_==GameplayFeature::jetpack?jetpack::minimum_speed:0.0F; }
+float GameplayModule::maximum_value() const noexcept { return feature_==GameplayFeature::auto_leave?auto_leave::maximum_hearts:feature_==GameplayFeature::jetpack?jetpack::maximum_speed:0.0F; }
 void GameplayModule::set_value(float value) noexcept {
-    if(has_value()&&std::isfinite(value))jetpack_speed.store(std::clamp(value,minimum_value(),maximum_value()));
+    if(feature_==GameplayFeature::auto_leave){auto_leave_hearts.store(auto_leave::clamp_hearts(value));return;}
+    if(feature_==GameplayFeature::jetpack&&std::isfinite(value))jetpack_speed.store(std::clamp(value,minimum_value(),maximum_value()));
 }
-void GameplayModule::adjust_value(int direction) noexcept { if(direction)set_value(value()+(direction<0?-1.0F:1.0F)); }
+void GameplayModule::adjust_value(int direction) noexcept { if(direction)set_value(value()+(direction<0?(feature_==GameplayFeature::auto_leave?-0.5F:-1.0F):(feature_==GameplayFeature::auto_leave?0.5F:1.0F))); }
 std::string_view GameplayModule::boolean_setting_name() const noexcept { return feature_==GameplayFeature::esp ? "Players only" : ""; }
 bool GameplayModule::boolean_setting() const noexcept { return players_only.load(); }
 void GameplayModule::set_boolean_setting(bool value) noexcept { if(feature_==GameplayFeature::esp)players_only=value; }

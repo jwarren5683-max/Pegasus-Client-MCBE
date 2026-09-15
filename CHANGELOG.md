@@ -1,5 +1,17 @@
 # Changelog
 
+## Auto Leave health safety module — 2026-09-15
+
+- Added **Auto Leave** under Combat with a 0.5–10 heart slider, a 4-heart default, and half-heart steps.
+- Reads the verified native health attribute and requires two matching low-health ticks before acting.
+- Uses Bedrock's asynchronous leave-game request, returning to the world list without terminating Minecraft or forging a network packet.
+- Works in integrated/local and remote worlds. The action is one-shot per session and rearms when the module is toggled or the player/world changes.
+- Fails closed when health, player, client-instance, vtable, or executable-code validation fails.
+
+### Verification
+
+- 17 of 17 automated tests passed, including threshold clamping, transient-read rejection, one-shot behavior, slider metadata, and remote-session availability.
+
 ## Trigger Bot crash fix and remote-server safety — 2026-09-15
 
 - Removed the re-entrant native `GameMode::attack` call that produced repeatable `0xC0000005` crashes when a target was acquired.

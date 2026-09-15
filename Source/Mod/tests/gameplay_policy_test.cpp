@@ -6,7 +6,30 @@ using namespace utility::modules;
 void check(bool ok,const char* text){if(!ok){std::fprintf(stderr,"FAIL: %s\n",text);std::exit(1);}}
 int eject_calls=0;
 void __fastcall mock_eject(void*,void*,void*,void*,void*,void*,void*,bool,void*){++eject_calls;}
+int leave_calls=0;
+void __fastcall mock_leave(void*){++leave_calls;}
 int main(){
+    utility::integration::server_safety::reset();
+    std::array<Byte,0xE00> leave_player{};
+    void* leave_table[15]{};
+    struct FakeClient { void** table; } leave_client{leave_table};
+    leave_table[0]=reinterpret_cast<void*>(&mock_leave);
+    leave_table[14]=reinterpret_cast<void*>(&mock_leave);
+    void* leave_client_pointer=&leave_client;
+    std::memcpy(leave_player.data()+0xD70,&leave_client_pointer,sizeof(leave_client_pointer));
+    image=reinterpret_cast<Byte*>(GetModuleHandleW(nullptr));
+    check(request_leave_game_async(leave_player.data())&&leave_calls==1,
+        "validated client vtable dispatches asynchronous leave exactly once");
+    check(!request_leave_game_async(nullptr)&&leave_calls==1,"invalid player fails closed without dispatch");
+    image=nullptr;
+    utility::integration::server_safety::observe_client_tick();
+    flags[static_cast<unsigned>(GameplayFeature::auto_leave)]=true;
+    flags[static_cast<unsigned>(GameplayFeature::triggerbot)]=true;
+    check(on(GameplayFeature::auto_leave)&&!on(GameplayFeature::triggerbot),
+        "remote sessions keep Auto Leave but block combat automation");
+    flags[static_cast<unsigned>(GameplayFeature::auto_leave)]=false;
+    flags[static_cast<unsigned>(GameplayFeature::triggerbot)]=false;
+    utility::integration::server_safety::reset();
     flags[static_cast<unsigned>(GameplayFeature::jetpack)]=true;
     flags[static_cast<unsigned>(GameplayFeature::esp)]=true;
     utility::integration::navigation_owns_controls=true;
@@ -135,7 +158,7 @@ int main(){
 
     static_assert(sizeof(GameString)==32);
     static_assert(sizeof(OptionalString)==40);
-    GameplayModule jump(GameplayFeature::airjump),phase(GameplayFeature::phase),esp(GameplayFeature::esp);
+    GameplayModule jump(GameplayFeature::airjump),phase(GameplayFeature::phase),esp(GameplayFeature::esp),leave(GameplayFeature::auto_leave);
     pending_keys=0;
     jump.on_key_down(VK_SPACE); // key may already be released before the tick
     check((pending_keys.exchange(0)&16)!=0,"short airborne jump survives until tick");
@@ -164,6 +187,14 @@ int main(){
     utility::Module& entity_settings=esp;
     check(entity_settings.boolean_setting_count()==1&&entity_settings.boolean_setting_name(0)=="Players only","legacy ESP setting adapter");
     entity_settings.set_boolean_setting(0,false);check(!esp.boolean_setting(),"legacy ESP indexed toggle");
+    utility::Module& leave_settings=leave;
+    check(leave.name()=="Auto Leave"&&leave.category()==utility::ModuleCategory::combat&&
+        leave.allowed_on_remote_server(),"Auto Leave is a remote-capable Combat safety module");
+    check(leave_settings.has_value()&&leave_settings.value_label()=="Leave at"&&
+        leave_settings.value_suffix()==" hearts"&&leave_settings.value()==4.0F,
+        "Auto Leave exposes a four-heart default slider");
+    leave_settings.set_value(3.26F);check(leave_settings.value()==3.5F,"Auto Leave snaps to half hearts");
+    leave_settings.adjust_value(-1);check(leave_settings.value()==3.0F,"Auto Leave slider uses half-heart steps");
     using chest_esp::Kind;
     check(chest_esp::classify("minecraft:barrel")==Kind::barrel,"barrel classification");
     check(chest_esp::classify("minecraft:chest")==Kind::chest,"chest classification");

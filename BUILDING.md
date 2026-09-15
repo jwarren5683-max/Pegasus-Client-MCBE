@@ -32,4 +32,4 @@ The current source includes unfinished navigation development, which remains dis
 
 ## Verification
 
-The Enhanced DLL and injector pass a disposable-process injection check. The current source passes all 16 tests, including remote-server fail-closed behavior, entity reach, Trigger Bot local input dispatch, focus loss, and menu interaction. The unsafe re-entrant native attack call was removed after repeatable crash reports. These checks do not override server authority or certify behavior on every Minecraft version.
+The Enhanced DLL and injector pass a disposable-process injection check. The current source passes all 17 tests, including Auto Leave threshold/one-shot behavior, remote-server policy, entity reach, Trigger Bot local input dispatch, focus loss, and menu interaction. The unsafe re-entrant native attack call was removed after repeatable crash reports. These checks do not override server authority or certify behavior on every Minecraft version.

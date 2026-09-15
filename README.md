@@ -7,7 +7,8 @@ Source and matching Windows binaries for the enhanced Pegasus utility mod and it
 - Entity and block reach can be adjusted from 3 to 10 blocks in 0.5-block steps. The default remains 7.
 - Extended reach and other gameplay-altering modules are limited to integrated/local worlds. In remote-server sessions they show `N/A` and any previously enabled state is turned off.
 - Trigger Bot no longer calls `GameMode::attack` from inside the player tick. It emits a spaced left-button press only in an integrated/local world while Minecraft is foreground and gameplay input is active.
-- On remote servers, only passive/UI features explicitly marked safe remain usable. Fullbright and ArrayList remain available; combat automation, reach, X-ray, movement modification, ESP, Ghost Hand, and Baritone do not.
+- **Auto Leave** appears under Combat. Its slider selects a threshold from 0.5 to 10 hearts in half-heart steps (default 4). Two valid low-health ticks trigger Bedrock's normal asynchronous leave flow once, returning to the world list without closing Minecraft.
+- On remote servers, Fullbright, ArrayList, and Auto Leave remain available; combat automation, reach, X-ray, movement modification, ESP, Ghost Hand, and Baritone do not. Server rules remain authoritative, including rules about automatic actions.
 - Phase module doesn't work, and the speed module works but is janky.
 - You can type ',help' in the chat while the client is loaded in your game and it will show you some commands the client provides.
 - Server restrictions remain authoritative. This build does not attempt to evade anti-cheat or server-side validation.
