@@ -56,11 +56,13 @@ jobs:
         run: |
           if (!(Test-Path './Pegasus.exe')) { throw 'Pegasus.exe was not produced.' }
           if (!(Test-Path './BedrockUtilityFramework.Xray.dll')) { throw 'DLL is missing.' }
-          New-Item -ItemType Directory -Path './artifact/Pegasus' -Force | Out-Null
+          New-Item -ItemType Directory -Path './artifact/Pegasus/tools' -Force | Out-Null
           Copy-Item './Pegasus.exe' './artifact/Pegasus/'
           Copy-Item './BedrockUtilityFramework.Xray.dll' './artifact/Pegasus/'
           Copy-Item './README.md' './artifact/Pegasus/'
           Copy-Item './BUILDING.md' './artifact/Pegasus/'
+          Copy-Item './BEDROCK_26_50.md' './artifact/Pegasus/'
+          Copy-Item './tools/check-bedrock-compat.ps1' './artifact/Pegasus/tools/'
           Get-FileHash './artifact/Pegasus/Pegasus.exe' -Algorithm SHA256 | Format-List
           Get-FileHash './artifact/Pegasus/BedrockUtilityFramework.Xray.dll' -Algorithm SHA256 | Format-List
 
