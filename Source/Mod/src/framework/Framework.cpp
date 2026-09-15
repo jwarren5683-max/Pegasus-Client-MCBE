@@ -1,6 +1,7 @@
 #include "Framework.hpp"
 
 #include "Logger.hpp"
+#include "../integration/BedrockBuild.hpp"
 #include "../integration/ChatCommands.hpp"
 #include "../modules/AntiKnockbackModule.hpp"
 #include "../modules/CriticalsModule.hpp"
@@ -13,6 +14,7 @@
 #include "../modules/GameplayModules.hpp"
 #include "../modules/BaritoneModule.hpp"
 
+#include <cstdio>
 #include <memory>
 
 namespace utility {
@@ -25,23 +27,31 @@ Framework& Framework::instance() noexcept {
 bool Framework::initialize(HMODULE module) noexcept {
     if (eject_requested_.load()) return false;
     bool expected = false;
-    if (!initialized_.compare_exchange_strong(expected, true)) {
-        return true;
-    }
+    if (!initialized_.compare_exchange_strong(expected, true)) return true;
 
     module_ = module;
-
     if (!Logger::instance().initialize()) {
         initialized_.store(false);
         return false;
     }
 
     Logger::instance().info("BedrockUtilityFramework loaded successfully.");
-    if (splash_text_hook_.install()) {
-        Logger::instance().info("Native splash-text hook installed; replacement is 'made by Roundomegaboi'.");
-    } else {
-        Logger::instance().info("Native splash-text hook not installed: host/build/signature is unsupported.");
+    {
+        const auto build = integration::current_bedrock_build();
+        char message[160]{};
+        if (build.image != nullptr) {
+            std::snprintf(message, sizeof(message),
+                "Minecraft executable profile: PE timestamp 0x%08X, SizeOfImage 0x%08X%s.",
+                static_cast<unsigned>(build.timestamp), static_cast<unsigned>(build.image_size),
+                integration::is_legacy_12645_build(build) ? " (legacy 1.26.45 profile)" : " (unvalidated profile)");
+        } else {
+            std::snprintf(message, sizeof(message), "Minecraft executable profile could not be read.");
+        }
+        Logger::instance().info(message);
     }
+
+    if (splash_text_hook_.install()) Logger::instance().info("Native splash-text hook installed; replacement is 'made by Roundomegaboi'.");
+    else Logger::instance().info("Native splash-text hook not installed: host/build/signature is unsupported.");
 
     config_.load_defaults();
     auto entity_reach = std::make_unique<modules::ReachModule>();
@@ -59,11 +69,8 @@ bool Framework::initialize(HMODULE module) noexcept {
         modules_.add(std::make_unique<modules::GameplayModule>(static_cast<modules::GameplayFeature>(i)));
     modules_.add(std::make_unique<modules::BaritoneModule>());
     modules_.initialize(events_);
-    if (renderer_.initialize(module_, modules_)) {
-        Logger::instance().info("Click menu initialized; Tab opens, left click toggles, right click opens settings.");
-    } else {
-        Logger::instance().info("Menu overlay initialization failed.");
-    }
+    if (renderer_.initialize(module_, modules_)) Logger::instance().info("Click menu initialized; Tab opens, left click toggles, right click opens settings.");
+    else Logger::instance().info("Menu overlay initialization failed.");
     modules_.commands().set_eject_handler([this]{return request_eject();});
     Logger::instance().info(integration::install_chat_commands(modules_)
         ? "Local comma commands installed: ,help, ,keybind, ,unbind and ,eject."
@@ -72,10 +79,7 @@ bool Framework::initialize(HMODULE module) noexcept {
 }
 
 void Framework::shutdown() noexcept {
-    if (!initialized_.exchange(false)) {
-        return;
-    }
-
+    if (!initialized_.exchange(false)) return;
     integration::stop_chat_commands(true);
     renderer_.shutdown();
     splash_text_hook_.uninstall();
@@ -88,8 +92,6 @@ void Framework::shutdown() noexcept {
 bool Framework::request_eject() noexcept {
     bool expected=false;
     if (!initialized_.load() || !eject_requested_.compare_exchange_strong(expected,true)) return false;
-    // Shutdown waits for the current chat callback, then joins the overlay thread.
-    // Never run it inline from either of those threads.
     const auto thread=CreateThread(nullptr,0,[](void* context)->DWORD {
         static_cast<Framework*>(context)->shutdown();
         return 0;
@@ -99,8 +101,6 @@ bool Framework::request_eject() noexcept {
     return true;
 }
 
-bool Framework::initialized() const noexcept {
-    return initialized_.load();
-}
+bool Framework::initialized() const noexcept { return initialized_.load(); }
 
 } // namespace utility
