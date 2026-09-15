@@ -64,7 +64,7 @@ public:
     bool has_value() const noexcept override { return true; }
     float value() const noexcept override { return entity_.block_value(); }
     float minimum_value() const noexcept override { return 3.0F; }
-    float maximum_value() const noexcept override { return 7.0F; }
+    float maximum_value() const noexcept override { return 10.0F; }
     void set_value(float distance) noexcept override { entity_.set_block_value(distance); }
     void adjust_value(int direction) noexcept override { set_value(value() + (direction < 0 ? -0.5F : 0.5F)); }
     void on_enable() override { entity_.set_block_enabled(true); }
@@ -73,3 +73,4 @@ private:
     ReachModule& entity_;
 };
 } // namespace utility::modules
+

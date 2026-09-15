@@ -9,6 +9,15 @@ void check(bool ok, const char* message) {
 }
 
 int main() {
+    ReachModule entity;
+    BlockReachModule block(entity);
+    check(entity.maximum_value() == 10.0F, "entity reach exposes the extended maximum");
+    check(block.maximum_value() == 10.0F, "block reach exposes the extended maximum");
+    entity.set_value(12.0F);
+    block.set_value(12.0F);
+    check(entity.value() == 10.0F, "entity reach clamps to the extended maximum");
+    check(block.value() == 10.0F, "block reach clamps to the extended maximum");
+
     // Extending one reach must not extend the other; reducing block reach must
     // still leave a long enough ray for normal Creative entity selection.
     for(float vanilla : {5.0F,7.0F}) {
@@ -83,3 +92,4 @@ int main() {
     VirtualFree(fixture, 0, MEM_RELEASE);
     std::puts("PASS: native Survival entity cap, clamp, final rejection, slider distances, signature rejection, restoration");
 }
+

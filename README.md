@@ -1,10 +1,13 @@
-# pegasus utility mod 1.0
+# Pegasus Enhanced utility mod
 
-Source for Pegasus utility mod and its desktop injector. Download compiled binaries from this repository's Releases page. See [BUILDING.md](BUILDING.md) for build instructions and source/release provenance.
+Source and matching Windows binaries for the enhanced Pegasus utility mod and its desktop injector. See [BUILDING.md](BUILDING.md) for build and verification instructions and [CHANGELOG.md](CHANGELOG.md) for tested updates.
 
 ## Notes
 
-- Phase module doesn't work, and the speed module works but is janky. All other modules work.
+- Entity and block reach can be adjusted from 3 to 10 blocks in 0.5-block steps. The default remains 7.
+- Extended reach changes client-side selection and single-player validation. Multiplayer servers can still reject actions beyond their own reach limit.
+- Trigger Bot calls Minecraft's verified native `GameMode::attack` method only while Minecraft is foreground and gameplay input is active. It does not use the adjacent interaction method that opens merchant menus.
+- Phase module doesn't work, and the speed module works but is janky.
 - You can type ',help' in the chat while the client is loaded in your game and it will show you some commands the client provides.
 - Combat and movement modules work on most servers. 
 - I am trying to add a baritone style autominer to the client but its not ready yet. I also would like to add many more modules in the future.
@@ -14,7 +17,7 @@ Source for Pegasus utility mod and its desktop injector. Download compiled binar
 ## Start
 
 1. Keep `Pegasus.exe` and `BedrockUtilityFramework.Xray.dll` together in this folder.
-2. Start a fresh Minecraft Bedrock 64-bit session. The injector does not check the game version.
+2. Start a fresh Minecraft Bedrock 64-bit session. Native hooks are signature-gated and were verified against Minecraft 1.26.4501.0.
 3. Open `Pegasus.exe`. Select your game session, then choose **Load utility mod**. Use Refresh if you started Minecraft afterward.
 4. In a Minecraft world, press **Tab** for the menu (clickgui) or use the arrow keys to activate modules.
 
@@ -29,13 +32,13 @@ Restart Minecraft before loading again or switching DLL versions.
 
 ## Release contents and source provenance
 
-- `BedrockUtilityFramework.Xray.dll`
-- `Pegasus.exe`: x64 desktop injector with a dark purple GUI. It validates the bundled DLL's SHA-256, does not restrict the Minecraft version, and uses the standard Windows DLL loader.
+- `BedrockUtilityFramework.Xray.dll`: current tested Enhanced mod build.
+- `Pegasus.exe`: x64 desktop injector with a dark purple GUI. It validates the bundled DLL's SHA-256 and uses the standard Windows DLL loader. It also supports `--inject` and a disposable-process `--self-test`.
 - `Source/Injector`: complete C# GUI/injector source and build script.
 - `Source/Mod`: full current C++ module source, tests, CMake configuration, and optional probe sources referenced by that configuration.
 - `SHA256SUMS.txt`: checksums provided alongside the downloadable release assets.
 
-**Source snapshot distinction:** the available current mod source contains later, unfinished Baritone/navigation changes. It includes the smooth-jetpack implementation, but it is not an exact historical source snapshot of the bundled DLL. No matching pre-navigation source snapshot was found. Rebuilding it produces the current development version. The packaged DLL preserves the completed jetpack gameplay objects and rebuilds only the splash-text hook. The later navigation source was not linked into this DLL.
+The checked-in DLL is built from the current source represented by this update. Baritone/navigation remains unavailable because its required native interfaces have not been verified.
 
 ## Build the injector
 
@@ -57,5 +60,6 @@ cmake --build C:/pegasus-build --config Debug
 ctest --test-dir C:/pegasus-build -C Debug --output-on-failure
 ```
 
-The output is `C:/pegasus-build/Debug/BedrockUtilityFramework.Xray.dll`. This is the current development source build described above. It is not automatically copied into this package.
+The output is `C:/pegasus-build/Debug/BedrockUtilityFramework.Xray.dll`. Update the injector's pinned hash and rebuild the injector whenever replacing this DLL.
+
 

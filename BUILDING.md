@@ -1,8 +1,8 @@
 # Building Pegasus
 
-## Download the compiled version
+## Use the compiled version
 
-Open this repository's Releases page and download the ZIP from **v1.0.0-beta**. Extract it before running `Pegasus.exe`; keep `BedrockUtilityFramework.Xray.dll` beside it. Both files are also available individually. Release assets have SHA-256 checksums.
+Keep the repository-root `Pegasus.exe` and `BedrockUtilityFramework.Xray.dll` together. Their current SHA-256 checksums are recorded in `SHA256SUMS.txt`.
 
 The compiled mod requires the x64 Visual Studio C++ debug runtimes. A standard Visual C++ Redistributable installation alone does not provide those debug libraries. See README for the full requirements.
 
@@ -28,10 +28,9 @@ ctest --test-dir C:/pegasus-build -C Debug --output-on-failure
 
 The output is `C:/pegasus-build/Debug/BedrockUtilityFramework.Xray.dll`.
 
-The current source includes later unfinished navigation development. It does **not** reproduce the released DLL exactly. The released DLL was made from the original completed smooth-jetpack gameplay objects with a rebuilt splash hook. Those historical object files are not required for building the current source and are not included in this repository.
-
-To use an intentionally rebuilt DLL with the injector, calculate its SHA-256 with `Get-FileHash`, update `ExpectedHash` in `Source/Injector/Pegasus.cs`, and rebuild the injector. Keep the resulting EXE and DLL together.
+The current source includes unfinished navigation development, which remains disabled because the required native interfaces are not verified. To use an intentionally rebuilt DLL with the injector, calculate its SHA-256 with `Get-FileHash`, update `ExpectedHash` in `Source/Injector/Pegasus.cs`, and rebuild the injector. Keep the resulting EXE and DLL together.
 
 ## Verification
 
-The release DLL passed a disposable-process injection check. The source snapshot previously compiled with thirteen tests passing and one environment-dependent menu test skipped; the subsequently added splash text test also passed separately. These checks do not certify in-game behavior on every Minecraft version.
+The Enhanced DLL and injector passed a disposable-process injection check. The current source passes all 15 tests, including entity reach, Trigger Bot native attack dispatch, focus loss, and menu interaction. A clean Minecraft 1.26.4501.0 injection also confirmed that the supported native hooks installed. These checks do not override multiplayer server validation or certify behavior on every Minecraft version.
+

@@ -25,7 +25,8 @@ constexpr std::uintptr_t max_pick_range_rva = 0x2D32A80;
 constexpr std::array<std::uintptr_t, 2> pick_slot_rvas{0xE81A0E0, 0xE81A180};
 constexpr std::size_t max_patch_size = 14;
 constexpr float minimum_distance = 3.0F;
-constexpr float maximum_distance = 7.0F;
+// Keep the familiar 7-block default, but allow an extended opt-in range.
+constexpr float maximum_distance = 10.0F;
 constexpr float distance_step = 0.5F;
 
 constexpr std::array<std::byte, 16> expected_pick_prologue{
@@ -365,7 +366,7 @@ float __fastcall ReachModule::max_pick_range_hook(void* game_mode) noexcept {
 }
 
 void ReachModule::set_block_value(float distance) noexcept {
-    if (std::isfinite(distance)) block_distance_.store(std::clamp(std::round(distance * 2.0F) / 2.0F, 3.0F, 7.0F));
+    if (std::isfinite(distance)) block_distance_.store(std::clamp(std::round(distance * 2.0F) / 2.0F, 3.0F, maximum_distance));
 }
 
 void __fastcall ReachModule::final_range_hook(void* hit, void* player, float range, bool adjust) noexcept {
@@ -539,3 +540,4 @@ void ReachModule::uninstall_hooks() noexcept {
 }
 
 } // namespace utility::modules
+

@@ -15,7 +15,7 @@ using System.Windows.Forms;
 
 internal static class Program {
     internal const string DllName = "BedrockUtilityFramework.Xray.dll";
-    internal const string ExpectedHash = "3EB3AC8077F692FF755FE99C5CF8A05D326F7ABCCABCB19400932D63EBEDF0F6";
+    internal const string ExpectedHash = "58314344B4FB41B0C83D202366E0071AA977E37521F87FB379B213FAFFE61E80";
     internal static string DllPath { get { return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, DllName); } }
     [STAThread] static int Main(string[] args) {
         if (args.Length == 1 && args[0] == "--test-host") { Thread.Sleep(30000); return 0; }
@@ -40,6 +40,24 @@ internal static class Program {
                 using (var bmp = new Bitmap(form.Width, form.Height)) { form.DrawToBitmap(bmp, new Rectangle(Point.Empty, bmp.Size)); bmp.Save(args[1]); }
             }
             return 0;
+        }
+        if (args.Length == 1 && args[0] == "--inject") {
+            try {
+                VerifyDll();
+                Process[] games = Process.GetProcessesByName("Minecraft.Windows");
+                if (games.Length != 1) throw new IOException(games.Length == 0 ? "Open Minecraft Bedrock first." : "More than one Minecraft session is running.");
+                using (Process game = games[0]) {
+                    var acl = File.GetAccessControl(DllPath);
+                    acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier("S-1-15-2-1"), FileSystemRights.ReadAndExecute, AccessControlType.Allow));
+                    File.SetAccessControl(DllPath, acl);
+                    Loader.Inject(game, DllPath);
+                }
+                Console.WriteLine("Loaded successfully. In Minecraft, press Tab to open the menu.");
+                return 0;
+            } catch (Exception e) {
+                Console.Error.WriteLine(e.Message);
+                return 1;
+            }
         }
         Application.Run(new PegasusForm()); return 0;
     }
@@ -72,7 +90,7 @@ internal sealed class PegasusForm : Form {
         public override string ToString() { return Name + "   /   PID " + Id; }
     }
     internal PegasusForm() {
-        Text = "pegasus | utility mod 1.0";
+        Text = "Pegasus Enhanced | reach up to 10";
         ClientSize = new Size(580, 490); FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false; StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(15, 17, 27); ForeColor = Color.White;
@@ -204,3 +222,4 @@ internal static class Loader {
         }
     }
 }
+

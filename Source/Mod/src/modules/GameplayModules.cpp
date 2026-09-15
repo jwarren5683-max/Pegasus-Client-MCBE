@@ -454,23 +454,33 @@ void __fastcall airjump_hook(void* id,void* jump_control,void* ground,void* play
         head_water,snow,lightweight,lava_drag,aabb,swim,effects,subboxes,actor_flags,jump_state,movement,registry,region);
 }
 
-// Use the same level HitResult and GameMode::_attack entry as native targeting.
-// Only the game thread resolves the weak entity reference; no Actor* survives a tick.
+// Use the live level HitResult to validate the target, then dispatch through
+// GameMode::attack (vtable index 14). Only the game thread resolves and uses
+// the Actor pointer; no Actor* survives a tick.
 bool verify_triggerbot() {
     struct Signature { std::uintptr_t rva; std::initializer_list<Byte> bytes; };
     const Signature signatures[]{
         {0xD72560,{0x48,0x8B,0x81,0xE8,0x01,0,0,0xC3}},
         {0x47E8B00,{0x48,0x83,0xEC,0x48,0x48,0x8D,0x51,0x38,0x48,0x8D,0x4C,0x24,0x28}},
         {0x26EFD60,{0x48,0x83,0xEC,0x28,0x80,0xB9,0x69,0x02,0,0,0}},
-        {0x2D2D020,{0x4D,0x89,0xC1,0x41,0xB0,0x01,0xE9}},
-        {0x2D33510,{0x4D,0x89,0xC1,0x80,0xB9,0xC8,0,0,0,0x01}}
+        {0x2D2C400,{0x55,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x56,0x57,0x53}},
+        {0x2D33530,{0x80,0xB9,0xC8,0,0,0,0x01,0x0F,0x85,0xC3,0x8E,0xFF,0xFF}}
     };
     for (const auto& signature:signatures)
         if(std::memcmp(image+signature.rva,signature.bytes.begin(),signature.bytes.size())) return false;
-    return read<void*>(image,0xE81A090+0x78)==image+0x2D2D020 &&
-        read<void*>(image,0xE81A130+0x78)==image+0x2D33510;
+    return read<void*>(image,0xE81A090+0x70)==image+0x2D2C400 &&
+        read<void*>(image,0xE81A130+0x70)==image+0x2D33530;
 }
-void triggerbot_tick(void* player, bool control, bool (*input_active)() = controls_active) {
+bool invoke_native_attack(void* mode,void* actor) {
+    const bool attacked=method<bool(__fastcall*)(void*,void*)>(mode,0x70)(mode,actor);
+    static ULONGLONG last_log{};
+    const auto now=GetTickCount64();
+    if(now-last_log>=1000){last_log=now;Logger::instance().info("Trigger Bot dispatched native attack.");}
+    return attacked;
+}
+using TriggerAction=bool(*)(void*,void*);
+void triggerbot_tick(void* player, bool control, bool (*input_active)() = controls_active,
+    TriggerAction attack_action = invoke_native_attack) {
     static triggerbot::Cadence cadence(static_cast<unsigned>(GetTickCount64()) ^ GetCurrentProcessId());
     static unsigned revision{};
     const auto current_revision=trigger_revision.load();
@@ -499,15 +509,14 @@ void triggerbot_tick(void* player, bool control, bool (*input_active)() = contro
     auto* mode=read<void*>(player,0xAA0);
     auto* table=read<Byte*>(mode);
     if(read<void*>(mode,8)!=player || (table!=image+0xE81A090 && table!=image+0xE81A130)) { stop(); return; }
-    const auto attack=method<bool(__fastcall*)(void*,void*,const Vec3*)>(mode,0x78);
-    if(reinterpret_cast<void*>(attack)!=(table==image+0xE81A090?image+0x2D2D020:image+0x2D33510)) { stop(); return; }
+    if(read<void*>(table,0x70)!=(table==image+0xE81A090?image+0x2D2C400:image+0x2D33530)) { stop(); return; }
     const auto position=read<Vec3>(hit,0x2C);
     if(!valid(position)) { stop(); return; }
     const triggerbot::TargetKey target{reinterpret_cast<std::uintptr_t>(actor),reinterpret_cast<std::uintptr_t>(dimension),read<std::uint32_t>(actor,0x18)};
     if(!cadence.update(esp_time(),target,true)) return;
-    // Recheck menu settings immediately before invoking the native attack.
+    // Recheck foreground and menu settings immediately before the native attack.
     if(on(GameplayFeature::triggerbot)&&trigger_revision.load()==revision&&input_active())
-        attack(mode,actor,&position);
+        attack_action(mode,actor);
 }
 
 void tick_features(void* player,Vec3 before,bool alive_before) {
@@ -754,6 +763,8 @@ void initialize() {
     jetpack_ready=swap_slot(0xE833530+0xC0,reinterpret_cast<void*>(original_server_tick),
         reinterpret_cast<void*>(&server_tick_hook));
     trigger_ready=verify_triggerbot();
+    Logger::instance().info(trigger_ready.load()?"Trigger Bot ready; native GameMode::attack verified.":
+        "Trigger Bot unavailable: native GameMode::attack signature mismatch.");
     ready=true;Logger::instance().info("Native gameplay modules initialized for Minecraft 1.26.4501.0.");
 }
 }
@@ -774,8 +785,8 @@ bool GameplayModule::available() const noexcept {
         (trigger_ready.load() && integration::game_context_detail::picker_ready.load()));
 }
 void GameplayModule::on_register(EventBus&) { initialize(); }
-void GameplayModule::on_enable() { if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot)++trigger_revision; flags[static_cast<unsigned>(feature_)]=true; }
-void GameplayModule::on_disable() { flags[static_cast<unsigned>(feature_)]=false; if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot)++trigger_revision; }
+void GameplayModule::on_enable() { if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;Logger::instance().info("Trigger Bot enabled; native attack delivery active.");} flags[static_cast<unsigned>(feature_)]=true; }
+void GameplayModule::on_disable() { flags[static_cast<unsigned>(feature_)]=false; if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;Logger::instance().info("Trigger Bot disabled.");} }
 bool GameplayModule::has_value() const noexcept { return feature_==GameplayFeature::jetpack; }
 std::string_view GameplayModule::value_label() const noexcept { return "Speed"; }
 std::string_view GameplayModule::value_suffix() const noexcept { return " blocks/s"; }
@@ -849,3 +860,4 @@ void GameplayModule::draw_overlay(void* target,int width,int height) noexcept {
     }
 }
 }
+
