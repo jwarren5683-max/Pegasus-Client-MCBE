@@ -11,6 +11,7 @@
 #include "../modules/GhostHandModule.hpp"
 #include "../modules/SpeedModule.hpp"
 #include "../modules/ArrayListModule.hpp"
+#include "../modules/CrosshairModule.hpp"
 #include "../modules/GameplayModules.hpp"
 #include "../modules/BaritoneModule.hpp"
 
@@ -63,6 +64,7 @@ bool Framework::initialize(HMODULE module) noexcept {
     modules_.add(std::make_unique<modules::CriticalsModule>());
     modules_.add(std::make_unique<modules::XrayModule>());
     modules_.add(std::make_unique<modules::FullbrightModule>());
+    modules_.add(std::make_unique<modules::CrosshairModule>());
     modules_.add(std::make_unique<modules::SpeedModule>());
     modules_.add(std::make_unique<modules::ArrayListModule>());
     for (unsigned i=0; i<static_cast<unsigned>(modules::GameplayFeature::count); ++i)
