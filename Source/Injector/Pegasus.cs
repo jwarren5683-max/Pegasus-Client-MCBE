@@ -15,7 +15,7 @@ using System.Windows.Forms;
 
 internal static class Program {
     internal const string DllName = "BedrockUtilityFramework.Xray.dll";
-    internal const string ExpectedHash = "43D6B941BEECC2A4EAE855B5E0B570432C865D8EFC29C0900F97B3D9F0989590";
+    internal const string ExpectedHash = "E6886EDCBB51E0CBD8ADAC37B03983D9AD9118BF5D8C5B338416B0CD9F78CBC4";
     internal static string DllPath { get { return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, DllName); } }
     [STAThread] static int Main(string[] args) {
         if (args.Length == 1 && args[0] == "--test-host") { Thread.Sleep(30000); return 0; }

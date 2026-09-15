@@ -9,6 +9,14 @@ void check(bool ok, const char* message) {
 }
 
 int main() {
+    check(release_12650.timestamp == 0x6AA482FD && release_12650.image_size == 0x12C01000,
+        "26.50 Reach profile matches the installed executable");
+    check(release_12650.pick_range_rva == 0x259FC40 &&
+        release_12650.max_pick_range_rva == 0x259FCE0,
+        "26.50 verified Reach function RVAs retained");
+    check(release_12650.pick_slot_rvas[0] == 0xE8275B0 &&
+        release_12650.pick_slot_rvas[1] == 0xE827650 && !release_12650.full_entity_support,
+        "26.50 verified vtable references retained without claiming unverified Survival support");
     ReachModule entity;
     BlockReachModule block(entity);
     check(entity.maximum_value() == 10.0F, "entity reach exposes the extended maximum");

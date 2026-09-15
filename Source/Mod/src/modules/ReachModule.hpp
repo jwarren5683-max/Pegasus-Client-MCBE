@@ -52,6 +52,8 @@ private:
     void* max_target_{};
     void* max_trampoline_{};
     unsigned char max_original_[14]{};
+    bool full_entity_support_{};
+    bool release_12650_{};
     bool hooks_installed_{};
 };
 

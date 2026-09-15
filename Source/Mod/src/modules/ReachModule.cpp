@@ -18,11 +18,26 @@
 namespace utility::modules {
 namespace {
 
-constexpr std::uint32_t supported_timestamp = 0x6A8378BA;
-constexpr std::uint32_t supported_image_size = 0x12888000;
-constexpr std::uintptr_t pick_range_rva = 0x2D329E0;
-constexpr std::uintptr_t max_pick_range_rva = 0x2D32A80;
-constexpr std::array<std::uintptr_t, 2> pick_slot_rvas{0xE81A0E0, 0xE81A180};
+struct ReachProfile final {
+    std::uint32_t timestamp;
+    std::uint32_t image_size;
+    std::uintptr_t pick_range_rva;
+    std::uintptr_t max_pick_range_rva;
+    std::array<std::uintptr_t, 2> pick_slot_rvas;
+    bool full_entity_support;
+};
+
+constexpr ReachProfile release_12645{
+    0x6A8378BA, 0x12888000, 0x2D329E0, 0x2D32A80,
+    {0xE81A0E0, 0xE81A180}, true};
+
+// Read-only 26.50 probing confirmed both exact function prologues and both
+// absolute vtable references. The separate Survival entity-cap and final-hit
+// sites have not yet been verified, so this profile intentionally installs
+// only the two proven range hooks.
+constexpr ReachProfile release_12650{
+    0x6AA482FD, 0x12C01000, 0x259FC40, 0x259FCE0,
+    {0xE8275B0, 0xE827650}, false};
 constexpr std::size_t max_patch_size = 14;
 constexpr float minimum_distance = 3.0F;
 // Keep the familiar 7-block default, but allow an extended opt-in range.
@@ -242,13 +257,13 @@ void write_absolute_jump(std::byte* destination, const void* target) noexcept {
     std::memcpy(destination + 6, &value, sizeof(value));
 }
 
-[[nodiscard]] bool supported_image(HMODULE image) noexcept {
+[[nodiscard]] const ReachProfile* reach_profile(HMODULE image) noexcept {
     if (image == nullptr) {
-        return false;
+        return nullptr;
     }
     wchar_t path[MAX_PATH]{};
     if (GetModuleFileNameW(image, path, MAX_PATH) == 0) {
-        return false;
+        return nullptr;
     }
     const wchar_t* filename = path;
     for (const wchar_t* cursor = path; *cursor != L'\0'; ++cursor) {
@@ -257,17 +272,20 @@ void write_absolute_jump(std::byte* destination, const void* target) noexcept {
         }
     }
     if (_wcsicmp(filename, L"Minecraft.Windows.exe") != 0) {
-        return false;
+        return nullptr;
     }
     const auto* base = reinterpret_cast<const std::byte*>(image);
     const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
     if (dos->e_magic != IMAGE_DOS_SIGNATURE) {
-        return false;
+        return nullptr;
     }
     const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
-    return nt->Signature == IMAGE_NT_SIGNATURE &&
-        nt->FileHeader.TimeDateStamp == supported_timestamp &&
-        nt->OptionalHeader.SizeOfImage == supported_image_size;
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return nullptr;
+    for (const auto* profile : {&release_12645, &release_12650}) {
+        if (nt->FileHeader.TimeDateStamp == profile->timestamp &&
+            nt->OptionalHeader.SizeOfImage == profile->image_size) return profile;
+    }
+    return nullptr;
 }
 
 bool exchange_slot(void** slot, void* value) noexcept {
@@ -317,11 +335,12 @@ void ReachModule::set_value(float distance) noexcept {
 
 void ReachModule::on_register(EventBus&) {
     if (install_hooks()) {
-        Logger::instance().info(
-            "Reach hooks installed for Minecraft 1.26.4501.0; block selection, Survival entity selection, and singleplayer validation use the live slider.");
+        Logger::instance().info(release_12650_
+            ? "Reach hooks installed for Minecraft 1.26.5101.0; verified ray and maximum-range paths use the live slider. Survival's separate entity cap remains vanilla until its 26.50 sites are verified."
+            : "Reach hooks installed for Minecraft 1.26.4501.0; block selection, Survival entity selection, and singleplayer validation use the live slider.");
     } else {
         Logger::instance().info(
-            "Reach unavailable: exact Minecraft 1.26.4501.0 range signatures were not present; no memory was changed.");
+            "Reach unavailable: exact supported range signatures were not present; no memory was changed.");
     }
 }
 
@@ -390,18 +409,19 @@ bool ReachModule::install_hooks() noexcept {
         return true;
     }
     HMODULE image = GetModuleHandleW(nullptr);
-    if (!supported_image(image)) {
+    const auto* profile = reach_profile(image);
+    if (profile == nullptr) {
         return false;
     }
     auto* base = reinterpret_cast<std::byte*>(image);
-    auto* pick_target = base + pick_range_rva;
-    auto* max_target = base + max_pick_range_rva;
+    auto* pick_target = base + profile->pick_range_rva;
+    auto* max_target = base + profile->max_pick_range_rva;
     if (std::memcmp(pick_target, expected_pick_prologue.data(), expected_pick_prologue.size()) != 0 ||
         std::memcmp(max_target, expected_max_prologue.data(), expected_max_prologue.size()) != 0) {
         return false;
     }
-    for (std::size_t index = 0; index < pick_slot_rvas.size(); ++index) {
-        pick_slots_[index] = reinterpret_cast<void**>(base + pick_slot_rvas[index]);
+    for (std::size_t index = 0; index < profile->pick_slot_rvas.size(); ++index) {
+        pick_slots_[index] = reinterpret_cast<void**>(base + profile->pick_slot_rvas[index]);
         if (*pick_slots_[index] != pick_target) {
             return false;
         }
@@ -416,19 +436,21 @@ bool ReachModule::install_hooks() noexcept {
     write_absolute_jump(trampoline + max_patch_size, max_target + max_patch_size);
     FlushInstructionCache(GetCurrentProcess(), trampoline, max_patch_size + 14);
 
-    const unsigned char final_expected[]{0x41,0x56,0x56,0x57,0x53,0x48,0x81,0xEC,0x88,0,0,0,0x44,0x0F,0x29,0x5C,0x24,0x70};
-    auto* final_target = base + 0x1B4B6F0;
-    if (std::memcmp(final_target, final_expected, sizeof(final_expected))) {
-        VirtualFree(trampoline, 0, MEM_RELEASE); return false;
+    if (profile->full_entity_support) {
+        const unsigned char final_expected[]{0x41,0x56,0x56,0x57,0x53,0x48,0x81,0xEC,0x88,0,0,0,0x44,0x0F,0x29,0x5C,0x24,0x70};
+        auto* final_target = base + 0x1B4B6F0;
+        if (std::memcmp(final_target, final_expected, sizeof(final_expected))) {
+            VirtualFree(trampoline, 0, MEM_RELEASE); return false;
+        }
+        auto* final_trampoline = static_cast<std::byte*>(VirtualAlloc(nullptr, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+        if (!final_trampoline) { VirtualFree(trampoline, 0, MEM_RELEASE); return false; }
+        std::memcpy(final_original_, final_target, 18);
+        std::memcpy(final_trampoline, final_target, 18);
+        write_absolute_jump(final_trampoline + 18, final_target + 18);
+        FlushInstructionCache(GetCurrentProcess(), final_trampoline, 32);
+        original_final_range_ = reinterpret_cast<FinalRangeFunction>(final_trampoline);
+        final_target_ = final_target;
     }
-    auto* final_trampoline = static_cast<std::byte*>(VirtualAlloc(nullptr, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
-    if (!final_trampoline) { VirtualFree(trampoline, 0, MEM_RELEASE); return false; }
-    std::memcpy(final_original_, final_target, 18);
-    std::memcpy(final_trampoline, final_target, 18);
-    write_absolute_jump(final_trampoline + 18, final_target + 18);
-    FlushInstructionCache(GetCurrentProcess(), final_trampoline, 32);
-    original_final_range_ = reinterpret_cast<FinalRangeFunction>(final_trampoline);
-    final_target_ = final_target;
 
     original_pick_range_ = reinterpret_cast<PickRangeFunction>(pick_target);
     original_max_pick_range_ = reinterpret_cast<MaxPickRangeFunction>(trampoline);
@@ -469,11 +491,14 @@ bool ReachModule::install_hooks() noexcept {
 
     max_target_ = max_target;
     max_trampoline_ = trampoline;
+    full_entity_support_ = profile->full_entity_support;
+    release_12650_ = profile == &release_12650;
     hooks_installed_ = true;
-    if (!entity_range_storage().install(base)) {
+    if (full_entity_support_ && !entity_range_storage().install(base)) {
         uninstall_hooks();
         return false;
     }
+    if (!full_entity_support_) return true;
     bool final_installed = false;
     {
         SuspendedThreads suspended;
@@ -488,7 +513,7 @@ bool ReachModule::install_hooks() noexcept {
         }
     }
     if (!final_installed) { uninstall_hooks(); return false; }
-    integration::game_context_detail::picker_ready=true;
+    integration::game_context_detail::picker_ready = true;
     return true;
 }
 
@@ -499,7 +524,7 @@ void ReachModule::uninstall_hooks() noexcept {
         return;
     }
     active_.store(false, std::memory_order_release);
-    if (!entity_range_storage().uninstall()) return;
+    if (full_entity_support_ && !entity_range_storage().uninstall()) return;
     auto* pick_target = reinterpret_cast<void*>(original_pick_range_);
     (void)exchange_slot(pick_slots_[0], pick_target);
     (void)exchange_slot(pick_slots_[1], pick_target);
@@ -536,6 +561,8 @@ void ReachModule::uninstall_hooks() noexcept {
     VirtualFree(max_trampoline_, 0, MEM_RELEASE);
     max_trampoline_ = nullptr;
     max_target_ = nullptr;
+    full_entity_support_ = false;
+    release_12650_ = false;
     hooks_installed_ = false;
 }
 

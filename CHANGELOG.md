@@ -1,5 +1,13 @@
 # Changelog
 
+## Minecraft Bedrock 26.50 verified Reach restoration — 2026-09-15
+
+- Connected the exact 1.26.50 Reach and maximum-range functions found by the live compatibility probe.
+- Connected both exact 1.26.50 vtable references and retained byte-for-byte signature checks before any hook is installed.
+- Restored the EntityReach and BlockReach menu controls on 1.26.50 for the verified ray and maximum-range paths.
+- Kept the separate Survival entity-cap and final-hit patches disabled until their new 1.26.50 sites are independently verified.
+- Preserved full 1.26.45 behavior and restoration logic.
+
 ## Minecraft Bedrock 26.50 compatibility foundation — 2026-09-15
 
 - Recognizes the installed Minecraft `1.26.5101.0` executable exactly (`0x6AA482FD`, image size `0x12C01000`).
@@ -58,3 +66,4 @@
 ### Known limitation
 
 Extended reach is a client-side feature. Multiplayer servers can enforce their own reach distance and reject attacks or interactions outside that limit.
+
