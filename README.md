@@ -5,11 +5,12 @@ Source and matching Windows binaries for the enhanced Pegasus utility mod and it
 ## Notes
 
 - Entity and block reach can be adjusted from 3 to 10 blocks in 0.5-block steps. The default remains 7.
-- Extended reach changes client-side selection and single-player validation. Multiplayer servers can still reject actions beyond their own reach limit.
-- Trigger Bot calls Minecraft's verified native `GameMode::attack` method only while Minecraft is foreground and gameplay input is active. It does not use the adjacent interaction method that opens merchant menus.
+- Extended reach and other gameplay-altering modules are limited to integrated/local worlds. In remote-server sessions they show `N/A` and any previously enabled state is turned off.
+- Trigger Bot no longer calls `GameMode::attack` from inside the player tick. It emits a spaced left-button press only in an integrated/local world while Minecraft is foreground and gameplay input is active.
+- On remote servers, only passive/UI features explicitly marked safe remain usable. Fullbright and ArrayList remain available; combat automation, reach, X-ray, movement modification, ESP, Ghost Hand, and Baritone do not.
 - Phase module doesn't work, and the speed module works but is janky.
 - You can type ',help' in the chat while the client is loaded in your game and it will show you some commands the client provides.
-- Combat and movement modules work on most servers. 
+- Server restrictions remain authoritative. This build does not attempt to evade anti-cheat or server-side validation.
 - I am trying to add a baritone style autominer to the client but its not ready yet. I also would like to add many more modules in the future.
 - If the client breaks, restart minecraft. This shouldn't happen in most circumstances. It can happen if you eject and re-inject the client however. 
 - Feel free to use the hooks in this client and the reverse engineering research I've done to help you develop your own clients.
@@ -61,5 +62,4 @@ ctest --test-dir C:/pegasus-build -C Debug --output-on-failure
 ```
 
 The output is `C:/pegasus-build/Debug/BedrockUtilityFramework.Xray.dll`. Update the injector's pinned hash and rebuild the injector whenever replacing this DLL.
-
 

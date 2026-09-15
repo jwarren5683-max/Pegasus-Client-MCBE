@@ -16,6 +16,7 @@ public:
     void set_value(float level) noexcept override;
     void adjust_value(int direction) noexcept override { set_value(value()+(direction<0?-1.0F:1.0F)); }
     bool available() const noexcept override;
+    bool allowed_on_remote_server() const noexcept override { return true; }
     void on_register(EventBus&) override;
     void on_enable() override;
     void on_disable() override;

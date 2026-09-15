@@ -6,6 +6,7 @@
 #include "ChestEspContainers.hpp"
 #include "../integration/GameContext.hpp"
 #include "../integration/NavigationBridge.hpp"
+#include "../integration/ServerSafety.hpp"
 #include "../framework/Logger.hpp"
 #include <TlHelp32.h>
 #include <algorithm>
@@ -57,6 +58,7 @@ StartMining original_start{}, original_creative_start{};
 ContinueMining original_continue{};
 
 bool on(GameplayFeature feature) {
+    if(integration::server_safety::remote_session()) return false;
     if(integration::navigation_owns_controls.load() &&
        (feature==GameplayFeature::autotool||feature==GameplayFeature::phase||feature==GameplayFeature::airjump||
         feature==GameplayFeature::autosprint||feature==GameplayFeature::triggerbot||feature==GameplayFeature::jetpack))return false;
@@ -454,42 +456,51 @@ void __fastcall airjump_hook(void* id,void* jump_control,void* ground,void* play
         head_water,snow,lightweight,lava_drag,aabb,swim,effects,subboxes,actor_flags,jump_state,movement,registry,region);
 }
 
-// Use the live level HitResult to validate the target, then dispatch through
-// GameMode::attack (vtable index 14). Only the game thread resolves and uses
-// the Actor pointer; no Actor* survives a tick.
+// Use the live level HitResult to validate the target. Attack delivery is a
+// spaced local mouse press, never a re-entrant GameMode call from Player::tick.
 bool verify_triggerbot() {
     struct Signature { std::uintptr_t rva; std::initializer_list<Byte> bytes; };
     const Signature signatures[]{
         {0xD72560,{0x48,0x8B,0x81,0xE8,0x01,0,0,0xC3}},
         {0x47E8B00,{0x48,0x83,0xEC,0x48,0x48,0x8D,0x51,0x38,0x48,0x8D,0x4C,0x24,0x28}},
-        {0x26EFD60,{0x48,0x83,0xEC,0x28,0x80,0xB9,0x69,0x02,0,0,0}},
-        {0x2D2C400,{0x55,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x56,0x57,0x53}},
-        {0x2D33530,{0x80,0xB9,0xC8,0,0,0,0x01,0x0F,0x85,0xC3,0x8E,0xFF,0xFF}}
+        {0x26EFD60,{0x48,0x83,0xEC,0x28,0x80,0xB9,0x69,0x02,0,0,0}}
     };
     for (const auto& signature:signatures)
         if(std::memcmp(image+signature.rva,signature.bytes.begin(),signature.bytes.size())) return false;
-    return read<void*>(image,0xE81A090+0x70)==image+0x2D2C400 &&
-        read<void*>(image,0xE81A130+0x70)==image+0x2D33530;
+    return true;
 }
-bool invoke_native_attack(void* mode,void* actor) {
-    const bool attacked=method<bool(__fastcall*)(void*,void*)>(mode,0x70)(mode,actor);
-    static ULONGLONG last_log{};
-    const auto now=GetTickCount64();
-    if(now-last_log>=1000){last_log=now;Logger::instance().info("Trigger Bot dispatched native attack.");}
-    return attacked;
+bool trigger_button_down{};
+ULONGLONG trigger_button_time{};
+bool send_trigger_mouse(DWORD mouse_flags) {
+    INPUT input{};input.type=INPUT_MOUSE;input.mi.dwFlags=mouse_flags;
+    return SendInput(1,&input,sizeof(input))==1;
 }
-using TriggerAction=bool(*)(void*,void*);
+void release_trigger_mouse() {
+    if(!trigger_button_down)return;
+    send_trigger_mouse(MOUSEEVENTF_LEFTUP);trigger_button_down=false;trigger_button_time=0;
+}
+bool emit_local_attack() {
+    if(trigger_button_down||!controls_active()||!integration::server_safety::local_world())return false;
+    if(!send_trigger_mouse(MOUSEEVENTF_LEFTDOWN))return false;
+    trigger_button_down=true;trigger_button_time=GetTickCount64();
+    static ULONGLONG last_log{};const auto now=trigger_button_time;
+    if(now-last_log>=1000){last_log=now;Logger::instance().info("Trigger Bot dispatched local attack input.");}
+    return true;
+}
+using TriggerAction=bool(*)();
 void triggerbot_tick(void* player, bool control, bool (*input_active)() = controls_active,
-    TriggerAction attack_action = invoke_native_attack) {
+    TriggerAction attack_action = emit_local_attack) {
     static triggerbot::Cadence cadence(static_cast<unsigned>(GetTickCount64()) ^ GetCurrentProcessId());
     static unsigned revision{};
     const auto current_revision=trigger_revision.load();
+    const auto now=GetTickCount64();
+    if(trigger_button_down && (now<trigger_button_time || now-trigger_button_time>=15 ||
+       !on(GameplayFeature::triggerbot) || !control || !input_active())) release_trigger_mouse();
     if(revision!=current_revision) { cadence.reset(); revision=current_revision; }
     const auto stop=[&] { cadence.reset(); };
     if(!on(GameplayFeature::triggerbot)||!trigger_ready.load()||!control||!local_player(player)||
        !integration::game_context_detail::picker_ready.load()) { stop(); return; }
     const auto observed=integration::game_context_detail::crosshair_time.load();
-    const auto now=GetTickCount64();
     if(!observed||now<observed||now-observed>100||
        integration::game_context_detail::crosshair_player.load()!=player) { stop(); return; }
     auto* level=read<void*>(player,0x1D8);
@@ -506,17 +517,13 @@ void triggerbot_tick(void* player, bool control, bool (*input_active)() = contro
     const auto type=triggerbot::classify(name,living);
     const auto options=trigger_targets.load();
     if(!esp_identifier(name)||!triggerbot::selected(type,options)) { stop(); return; }
-    auto* mode=read<void*>(player,0xAA0);
-    auto* table=read<Byte*>(mode);
-    if(read<void*>(mode,8)!=player || (table!=image+0xE81A090 && table!=image+0xE81A130)) { stop(); return; }
-    if(read<void*>(table,0x70)!=(table==image+0xE81A090?image+0x2D2C400:image+0x2D33530)) { stop(); return; }
     const auto position=read<Vec3>(hit,0x2C);
     if(!valid(position)) { stop(); return; }
     const triggerbot::TargetKey target{reinterpret_cast<std::uintptr_t>(actor),reinterpret_cast<std::uintptr_t>(dimension),read<std::uint32_t>(actor,0x18)};
     if(!cadence.update(esp_time(),target,true)) return;
     // Recheck foreground and menu settings immediately before the native attack.
     if(on(GameplayFeature::triggerbot)&&trigger_revision.load()==revision&&input_active())
-        attack_action(mode,actor);
+        attack_action();
 }
 
 void tick_features(void* player,Vec3 before,bool alive_before) {
@@ -574,6 +581,7 @@ void tick_features(void* player,Vec3 before,bool alive_before) {
     if(on(GameplayFeature::chest_esp))capture_storage(player);
 }
 void __fastcall local_tick_features(void* player) {
+    integration::server_safety::observe_client_tick();
     const auto before=read<Vec3>(read<void*>(player,0x218));
     const bool alive_before=native<bool(__fastcall*)(void*)>(0x26EFD60)(player);
     integration::navigation_tick(player);
@@ -595,6 +603,7 @@ void __fastcall tick_hook(void* player) {
     dispatch_jetpack_tick(player,local_tick_features,true);
 }
 void __fastcall server_tick_hook(void* player) {
+    if(our_player(player)) integration::server_safety::observe_integrated_server_tick();
     dispatch_jetpack_tick(player,original_server_tick,our_player(player));
 }
 // The native closest-space system only adds horizontal ejection velocity.
@@ -763,8 +772,8 @@ void initialize() {
     jetpack_ready=swap_slot(0xE833530+0xC0,reinterpret_cast<void*>(original_server_tick),
         reinterpret_cast<void*>(&server_tick_hook));
     trigger_ready=verify_triggerbot();
-    Logger::instance().info(trigger_ready.load()?"Trigger Bot ready; native GameMode::attack verified.":
-        "Trigger Bot unavailable: native GameMode::attack signature mismatch.");
+    Logger::instance().info(trigger_ready.load()?"Trigger Bot ready for local worlds; safe input delivery active.":
+        "Trigger Bot unavailable: target-picker signature mismatch.");
     ready=true;Logger::instance().info("Native gameplay modules initialized for Minecraft 1.26.4501.0.");
 }
 }
@@ -785,8 +794,8 @@ bool GameplayModule::available() const noexcept {
         (trigger_ready.load() && integration::game_context_detail::picker_ready.load()));
 }
 void GameplayModule::on_register(EventBus&) { initialize(); }
-void GameplayModule::on_enable() { if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;Logger::instance().info("Trigger Bot enabled; native attack delivery active.");} flags[static_cast<unsigned>(feature_)]=true; }
-void GameplayModule::on_disable() { flags[static_cast<unsigned>(feature_)]=false; if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;Logger::instance().info("Trigger Bot disabled.");} }
+void GameplayModule::on_enable() { if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;Logger::instance().info("Trigger Bot enabled for local-world input delivery.");} flags[static_cast<unsigned>(feature_)]=true; }
+void GameplayModule::on_disable() { flags[static_cast<unsigned>(feature_)]=false; if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;release_trigger_mouse();Logger::instance().info("Trigger Bot disabled.");} }
 bool GameplayModule::has_value() const noexcept { return feature_==GameplayFeature::jetpack; }
 std::string_view GameplayModule::value_label() const noexcept { return "Speed"; }
 std::string_view GameplayModule::value_suffix() const noexcept { return " blocks/s"; }
@@ -860,4 +869,3 @@ void GameplayModule::draw_overlay(void* target,int width,int height) noexcept {
     }
 }
 }
-
