@@ -54,8 +54,11 @@ jobs:
       - name: Run injector self-test
         shell: pwsh
         run: |
-          & './Pegasus.exe' --self-test
-          if ($LASTEXITCODE -ne 0) { throw "Pegasus self-test exited with code $LASTEXITCODE" }
+          $test = Start-Process -FilePath './Pegasus.exe' -ArgumentList '--self-test' -Wait -PassThru
+          if ($test.ExitCode -ne 0) {
+            if (Test-Path './self-test-result.txt') { Get-Content './self-test-result.txt' }
+            throw "Pegasus self-test exited with code $($test.ExitCode)"
+          }
           if (!(Test-Path './self-test-result.txt')) { throw 'Pegasus self-test did not produce a result file.' }
           $result = Get-Content './self-test-result.txt' -Raw
           Write-Host $result
