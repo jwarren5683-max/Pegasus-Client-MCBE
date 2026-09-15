@@ -2,6 +2,7 @@
 
 #include <Windows.h>
 
+#include <cstddef>
 #include <cstdint>
 
 namespace utility::integration {
