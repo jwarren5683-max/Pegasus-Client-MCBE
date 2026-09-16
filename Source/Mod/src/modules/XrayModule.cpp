@@ -50,6 +50,10 @@ struct State {
     bool applied_fullbright{};
     bool applied_xray{};
     uintptr_t base{};
+    uintptr_t image_size{};
+    uintptr_t graphics_vector{};
+    uintptr_t graphics_vtable{};
+    bool adaptive_12650{};
     Tick original{};
     std::recursive_mutex mutex;
     std::vector<Graphics> saved;
@@ -130,6 +134,7 @@ std::vector<LightPatch> lighting_patches(bool fullbright,int level) {
 }
 bool lights(bool on, bool fullbright=false,int level=15) {
     auto& s=state();
+    if(s.adaptive_12650) return true;
     const auto patches=lighting_patches(on?fullbright:s.applied_fullbright,on?level:s.applied_level);
     for(const auto& p:patches) {
         const auto& expected=on?p.before:p.after;
@@ -146,12 +151,12 @@ bool lights(bool on, bool fullbright=false,int level=15) {
     } return true;
 }
 bool snapshot(std::vector<Graphics>& out,uintptr_t& begin,uintptr_t& end,unsigned visibility) {
-    auto& s=state();begin=get<uintptr_t>(s.base+graphics_vector_rva);end=get<uintptr_t>(s.base+graphics_vector_rva+8);
+    auto& s=state();begin=get<uintptr_t>(s.graphics_vector);end=get<uintptr_t>(s.graphics_vector+8);
     if(end<=begin || (end-begin)%8 || (end-begin)/8>20000 || !readable(begin,end-begin)) return false;
     unsigned ores=0; bool air=false,stone=false;
     for(auto pos=begin;pos<end;pos+=8) {
         const auto object=get<uintptr_t>(pos);
-        if(get<uintptr_t>(object)!=s.base+graphics_vtable_rva || !readable(object,0x80)) return false;
+        if(get<uintptr_t>(object)!=s.graphics_vtable || !readable(object,0x80)) return false;
         const auto block=get<uintptr_t>(object+8), type=get<uintptr_t>(block+0x68);
         char name[160]{};size_t n{};
         if(!name_of(type,name,n)) continue;
@@ -165,15 +170,40 @@ bool snapshot(std::vector<Graphics>& out,uintptr_t& begin,uintptr_t& end,unsigne
     }
     return air && stone && ores>=21;
 }
+bool discover_graphics_registry() {
+    auto& s=state();const auto* base=reinterpret_cast<const unsigned char*>(s.base);
+    const auto* dos=reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    const auto* nt=reinterpret_cast<const IMAGE_NT_HEADERS64*>(base+dos->e_lfanew);
+    const auto* sections=IMAGE_FIRST_SECTION(nt);
+    for(unsigned index=0;index<nt->FileHeader.NumberOfSections;++index){const auto& section=sections[index];
+        if(section.Characteristics&IMAGE_SCN_MEM_EXECUTE)continue;
+        const auto start=static_cast<uintptr_t>(section.VirtualAddress);
+        const auto size=static_cast<uintptr_t>(section.Misc.VirtualSize);
+        if(start>=s.image_size||size<16)continue;
+        const auto limit=(std::min)(size,s.image_size-start);
+        for(uintptr_t offset=0;offset+16<=limit;offset+=8){const auto address=s.base+start+offset;
+            const auto begin=get<uintptr_t>(address),end=get<uintptr_t>(address+8);
+            if(!begin||end<=begin||(end-begin)%8)continue;const auto count=(end-begin)/8;
+            if(count<64||count>20000||!readable(begin,(std::min<uintptr_t>)(end-begin,256)))continue;
+            const auto object=get<uintptr_t>(begin);const auto table=get<uintptr_t>(object);
+            if(!object||!table||table<s.base||table>=s.base+s.image_size||!readable(object,0x80))continue;
+            s.graphics_vector=address;s.graphics_vtable=table;
+            std::vector<Graphics> entries;uintptr_t found_begin{},found_end{};
+            if(snapshot(entries,found_begin,found_end,XrayModule::default_visibility))return true;
+            s.graphics_vector=0;s.graphics_vtable=0;
+        }
+    }
+    return false;
+}
 void exchange_field(uintptr_t p,int value) noexcept { InterlockedExchange(reinterpret_cast<volatile LONG*>(p),value); }
 void restore_graphics() {
     auto& s=state();
     // Match current entries; a world/resource reload may already have destroyed old objects.
-    const auto begin=get<uintptr_t>(s.base+graphics_vector_rva),end=get<uintptr_t>(s.base+graphics_vector_rva+8);
+    const auto begin=get<uintptr_t>(s.graphics_vector),end=get<uintptr_t>(s.graphics_vector+8);
     if(end<begin || end-begin>160000 || !readable(begin,end-begin)) {s.saved.clear();return;}
     for(auto p=begin;p<end;p+=8) {
         const auto object=get<uintptr_t>(p);
-        for(const auto& g:s.saved) if(g.object==object && get<uintptr_t>(object)==s.base+graphics_vtable_rva &&
+        for(const auto& g:s.saved) if(g.object==object && get<uintptr_t>(object)==s.graphics_vtable &&
             get<uintptr_t>(object+8)==g.block && get<uintptr_t>(g.block+0x68)==g.type) {
             // Resource reload can reset fields on the same allocations. Restore only
             // fields still carrying our override; never replace freshly loaded values.
@@ -197,8 +227,8 @@ void __fastcall tick_hook(void* coordinator) {
             const bool requested=xray || fullbright;
             const unsigned visibility=s.visibility.load();
             const bool changed_registry=s.applied.load() &&
-                (get<uintptr_t>(s.base+graphics_vector_rva)!=s.registry_begin || get<uintptr_t>(s.base+graphics_vector_rva+8)!=s.registry_end ||
-                 get<uintptr_t>(s.stone_graphics)!=s.base+graphics_vtable_rva ||
+                (get<uintptr_t>(s.graphics_vector)!=s.registry_begin || get<uintptr_t>(s.graphics_vector+8)!=s.registry_end ||
+                 get<uintptr_t>(s.stone_graphics)!=s.graphics_vtable ||
                  get<int>(s.stone_graphics+16)!=(s.applied_xray ? -1 : 0) ||
                  (s.applied_fullbright && get<int>(s.stone_graphics+20)!=0));
             if(s.applied.load() && (!requested || changed_registry || xray!=s.applied_xray || fullbright!=s.applied_fullbright ||
@@ -232,14 +262,43 @@ void __fastcall tick_hook(void* coordinator) {
     }
     s.original(coordinator);
 }
+void adaptive_tick() {
+    auto& s=state();std::lock_guard guard(s.mutex);
+    const bool xray=s.desired.load();const unsigned visibility=s.visibility.load();
+    const bool changed=s.applied.load()&&
+        (get<uintptr_t>(s.graphics_vector)!=s.registry_begin||get<uintptr_t>(s.graphics_vector+8)!=s.registry_end||
+         get<uintptr_t>(s.stone_graphics)!=s.graphics_vtable||get<int>(s.stone_graphics+16)!=(s.applied_xray?-1:0));
+    if(s.applied.load()&&(!xray||changed||visibility!=s.applied_visibility)){
+        restore_graphics();s.applied=false;Logger::instance().info("x-ray: restored 26.50 block graphics.");
+    }
+    if(xray&&!s.applied.load()){
+        std::vector<Graphics> entries;uintptr_t begin{},end{};
+        if(snapshot(entries,begin,end,visibility)){
+            s.applied_xray=true;s.applied_fullbright=false;s.applied_visibility=visibility;
+            s.saved=std::move(entries);s.registry_begin=begin;s.registry_end=end;
+            for(const auto& g:s.saved){char name[160]{};size_t length{};
+                if(name_of(g.type,name,length)&&std::string_view(name,length)=="minecraft:stone")s.stone_graphics=g.object;
+                if(!g.retained)exchange_field(g.object+16,-1);else exchange_field(g.object+20,0);
+            }
+            s.applied=true;Logger::instance().info("x-ray: Minecraft 1.26.5101.0 block graphics applied; existing chunk meshes refresh as Bedrock rebuilds them.");
+        }
+    }
+}
 bool install() {
     auto& s=state();std::lock_guard guard(s.mutex);if(s.installed) return true;
     const auto image=GetModuleHandleW(L"Minecraft.Windows.exe");if(!image)return false;
     s.base=reinterpret_cast<uintptr_t>(image);
     const auto dos=reinterpret_cast<const IMAGE_DOS_HEADER*>(image);
     const auto nt=reinterpret_cast<const IMAGE_NT_HEADERS64*>(s.base+dos->e_lfanew);
-    if(dos->e_magic!=IMAGE_DOS_SIGNATURE || nt->Signature!=IMAGE_NT_SIGNATURE ||
-       nt->FileHeader.TimeDateStamp!=0x6A8378BA || nt->OptionalHeader.SizeOfImage!=0x12888000) return false;
+    if(dos->e_magic!=IMAGE_DOS_SIGNATURE || nt->Signature!=IMAGE_NT_SIGNATURE)return false;
+    s.image_size=nt->OptionalHeader.SizeOfImage;
+    if(nt->FileHeader.TimeDateStamp==0x6AA482FD&&s.image_size==0x12C01000){
+        s.adaptive_12650=true;
+        if(!discover_graphics_registry()){s.adaptive_12650=false;return false;}
+        s.installed=true;Logger::instance().info("x-ray: Minecraft 1.26.5101.0 BlockGraphics registry verified; adaptive terrain filter ready.");return true;
+    }
+    if(nt->FileHeader.TimeDateStamp!=0x6A8378BA || s.image_size!=0x12888000) return false;
+    s.graphics_vector=s.base+graphics_vector_rva;s.graphics_vtable=s.base+graphics_vtable_rva;
     if(std::memcmp(reinterpret_cast<void*>(s.base+tick_rva),tick_bytes.data(),tick_bytes.size()) ||
        get<uintptr_t>(s.base+coordinator_vtable_rva)!=s.base+0x99711A0 ||
        std::memcmp(reinterpret_cast<void*>(s.base+rebuild_rva),"\x55\x41\x57\x41\x56\x41\x55\x41\x54\x56\x57\x53\x48\x81\xEC\x88\x00\x00\x00",19)) return false;
@@ -272,12 +331,14 @@ void XrayModule::set_boolean_setting(std::size_t index, bool value) noexcept {
 }
 void XrayModule::on_enable() { state().visibility=visibility_.load();state().desired=true; }
 void XrayModule::on_disable() { state().desired=false; }
+void XrayModule::on_tick() noexcept { if(state().adaptive_12650) adaptive_tick(); }
 XrayModule::~XrayModule() {state().desired=false;}
 } // namespace utility::modules
 
 namespace utility::integration::terrain_lighting {
 bool initialize() { return utility::modules::install(); }
-bool available() noexcept { return utility::modules::state().installed.load(); }
+bool available() noexcept { return utility::modules::state().installed.load() && !utility::modules::state().adaptive_12650; }
 void set_fullbright_level(int level) noexcept { utility::modules::state().fullbright_level=std::clamp(level,9,15); }
 void set_fullbright(bool enabled) noexcept { utility::modules::state().fullbright=enabled; }
 }
+

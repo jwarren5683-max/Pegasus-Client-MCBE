@@ -29,10 +29,7 @@ Framework& Framework::instance() noexcept {
 bool Framework::initialize(HMODULE module) noexcept {
     if (eject_requested_.load()) return false;
     bool expected = false;
-    if (!initialized_.compare_exchange_strong(expected, true)) {
-        return true;
-    }
-
+    if (!initialized_.compare_exchange_strong(expected, true)) return true;
     module_ = module;
 
     if (!Logger::instance().initialize()) {
@@ -53,11 +50,8 @@ bool Framework::initialize(HMODULE module) noexcept {
         Logger::instance().info(message.str());
     }
     integration::run_compatibility_probe();
-    if (splash_text_hook_.install()) {
-        Logger::instance().info("Native splash-text hook installed; replacement is 'made by Roundomegaboi'.");
-    } else {
-        Logger::instance().info("Native splash-text hook not installed: host/build/signature is unsupported.");
-    }
+    if (splash_text_hook_.install()) Logger::instance().info("Native splash-text hook installed; replacement is 'made by Roundomegaboi'.");
+    else Logger::instance().info("Native splash-text hook not installed: host/build/signature is unsupported.");
 
     config_.load_defaults();
     auto entity_reach = std::make_unique<modules::ReachModule>();
@@ -74,12 +68,17 @@ bool Framework::initialize(HMODULE module) noexcept {
     for (unsigned i=0; i<static_cast<unsigned>(modules::GameplayFeature::count); ++i)
         modules_.add(std::make_unique<modules::GameplayModule>(static_cast<modules::GameplayFeature>(i)));
     modules_.add(std::make_unique<modules::BaritoneModule>());
-    modules_.initialize(events_);
+
+    // Bring the menu online before native feature discovery. Some 26.50
+    // compatibility checks scan large image/data sections and must never make
+    // the user lose the Tab menu while validation is in progress.
     if (renderer_.initialize(module_, modules_)) {
         Logger::instance().info("Click menu initialized; Tab opens, left click toggles, right click opens settings.");
     } else {
         Logger::instance().info("Menu overlay initialization failed.");
     }
+
+    modules_.initialize(events_);
     modules_.commands().set_eject_handler([this]{return request_eject();});
     Logger::instance().info(integration::install_chat_commands(modules_)
         ? "Local comma commands installed: ,help, ,keybind, ,unbind and ,eject."
@@ -88,10 +87,7 @@ bool Framework::initialize(HMODULE module) noexcept {
 }
 
 void Framework::shutdown() noexcept {
-    if (!initialized_.exchange(false)) {
-        return;
-    }
-
+    if (!initialized_.exchange(false)) return;
     integration::stop_chat_commands(true);
     renderer_.shutdown();
     splash_text_hook_.uninstall();
@@ -104,8 +100,6 @@ void Framework::shutdown() noexcept {
 bool Framework::request_eject() noexcept {
     bool expected=false;
     if (!initialized_.load() || !eject_requested_.compare_exchange_strong(expected,true)) return false;
-    // Shutdown waits for the current chat callback, then joins the overlay thread.
-    // Never run it inline from either of those threads.
     const auto thread=CreateThread(nullptr,0,[](void* context)->DWORD {
         static_cast<Framework*>(context)->shutdown();
         return 0;
@@ -115,8 +109,6 @@ bool Framework::request_eject() noexcept {
     return true;
 }
 
-bool Framework::initialized() const noexcept {
-    return initialized_.load();
-}
+bool Framework::initialized() const noexcept { return initialized_.load(); }
 
 } // namespace utility
