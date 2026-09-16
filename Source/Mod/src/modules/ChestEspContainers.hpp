@@ -28,11 +28,34 @@ inline Kind classify(std::string_view name) {
 }
 struct Position { int x{},y{},z{}; };
 struct Storage { Position position; float bounds[6]{}; Kind kind{Kind::count}; };
+struct Profile { std::uintptr_t get_block,get_chunk,chunk_source;std::size_t bounds; };
+inline constexpr Profile profile_12645{0x2486DC0,0x24860E0,0x598CE20,0x48};
+inline constexpr Profile profile_12650{0x2D80170,0x2D7F490,0x32F3600,0x50};
+inline const Profile* profile(unsigned char* image) {
+    const auto build=integration::current_bedrock_build();
+    if(reinterpret_cast<HMODULE>(image)!=build.image)return nullptr;
+    if(integration::is_release_12645(build))return &profile_12645;
+    if(integration::is_release_12650(build))return &profile_12650;
+    return nullptr;
+}
+inline bool profile_verified(unsigned char* image) {
+    const auto* selected=profile(image);if(!selected)return false;
+    if(selected==&profile_12645)return true; // Existing verified native path.
+    constexpr unsigned char block[]{0x56,0x57,0x48,0x83,0xEC,0x38,0x48,0x89,0xCF};
+    constexpr unsigned char chunk[]{0x41,0x56,0x56,0x57,0x53,0x48,0x83,0xEC,0x38,0x49,0x89,0xD0,0x48,0x89,0xCE};
+    constexpr unsigned char source[]{0x56,0x45,0x0F,0xB6,0x08,0x49,0xBA,0x25,0x23,0x22,0x84,0xE4,0x9C,0xF2,0xCB};
+    unsigned char bytes[15]{};SIZE_T copied{};
+    const auto matches=[&](std::uintptr_t rva,const unsigned char* expected,std::size_t size){return
+        ReadProcessMemory(GetCurrentProcess(),image+rva,bytes,size,&copied)&&copied==size&&!std::memcmp(bytes,expected,size);};
+    return matches(selected->get_block,block,sizeof(block))&&matches(selected->get_chunk,chunk,sizeof(chunk))&&matches(selected->chunk_source,source,sizeof(source));
+}
 using Observer=void(*)(Position,std::string_view,Kind);
 template<class T> T read(const void* object,std::size_t offset=0) {
     T value{};
-    if(object&&integration::readable_game_memory(static_cast<const unsigned char*>(object)+offset,sizeof(T)))
-        std::memcpy(&value,static_cast<const unsigned char*>(object)+offset,sizeof(T));
+    const auto at=reinterpret_cast<std::uintptr_t>(object);SIZE_T copied{};
+    if(at&&at+offset>=at&&at+offset+sizeof(T)>=at+offset)
+        ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<void*>(at+offset),&value,sizeof(T),&copied);
+    if(copied!=sizeof(T))value=T{};
     return value;
 }
 inline std::string identifier(const void* legacy) {
@@ -41,7 +64,8 @@ inline std::string identifier(const void* legacy) {
     const auto size=read<std::size_t>(field,16),capacity=read<std::size_t>(field,24);
     if(!size||size>128||capacity<size||capacity>65536)return {};
     const auto* chars=capacity>=16?read<const char*>(field):reinterpret_cast<const char*>(field);
-    return integration::readable_game_memory(chars,size)?std::string(chars,size):std::string{};
+    std::string result(size,'\0');SIZE_T copied{};
+    return chars&&ReadProcessMemory(GetCurrentProcess(),chars,result.data(),size,&copied)&&copied==size?result:std::string{};
 }
 inline bool belongs_to_chunk(Position p,int chunk_x,int chunk_z,int min_y,int max_y,std::uint32_t key) {
     // Floor division for negative coordinates, independent of compiler right-shift rules.
@@ -51,25 +75,29 @@ inline bool belongs_to_chunk(Position p,int chunk_x,int chunk_z,int min_y,int ma
         (static_cast<unsigned>(p.y-min_y)<<16);
     return packed==key;
 }
+inline bool valid_bounds(const Storage& storage) {
+    const auto& p=storage.position;
+    if(storage.kind==Kind::count||p.x < -30000000||p.x>30000000||p.z < -30000000||p.z>30000000||p.y < -4096||p.y>4096)return false;
+    const int components[]{p.x,p.y,p.z};
+    for(int axis=0;axis<3;++axis)if(!std::isfinite(storage.bounds[axis])||
+        !std::isfinite(storage.bounds[axis+3])||storage.bounds[axis+3]<=storage.bounds[axis]||
+        std::abs(storage.bounds[axis]-static_cast<float>(components[axis]))>=2||
+        std::abs(storage.bounds[axis+3]-static_cast<float>(components[axis]+1))>=2)return false;
+    return true;
+}
 // Run exclusively from the local player's native tick. BlockSource::getChunk
 // is a loaded-chunk lookup, not a generation/load request. No world edits occur.
-inline bool capture(void* player,unsigned char* image,std::vector<Storage>& output,Observer observer=nullptr) {
+template<class GetChunk,class GetBlock>
+inline bool capture_loaded(void* player,void* dimension,void* region,void* source,const Profile& selected,
+                           std::vector<Storage>& output,GetChunk get_chunk,GetBlock get_block,Observer observer=nullptr) {
     output.clear();
-    auto* dimension=read<void*>(player,0x1C8);
-    auto* region=read<void*>(dimension,0xF0);
-    auto* table=read<void*>(region);
-    if(read<void*>(table,0x10)!=image+0x2486DC0||read<void*>(table,0x148)!=image+0x24860E0)return false;
-    auto* source=read<void*>(region,0x28);
-    if(read<void*>(read<void*>(source),0x18)!=image+0x598CE20)return false;
     const auto min_y=read<short>(region,0x3A),max_y=read<short>(region,0x38);
     const auto* head=read<void*>(source,0x78);const auto count=read<std::size_t>(source,0x80);
     if(!head||count>16384||min_y>=max_y)return false;
-    using GetChunk=void*(__fastcall*)(void*,const void*);
-    using GetBlock=void*(__fastcall*)(void*,const Position*);
-    const auto get_chunk=reinterpret_cast<GetChunk>(image+0x24860E0);
-    const auto get_block=reinterpret_cast<GetBlock>(image+0x2486DC0);
+    const auto deadline=GetTickCount64()+10;
     auto* node=read<void*>(head);
     for(std::size_t index=0;index<count&&node&&node!=head;++index) {
+        if(GetTickCount64()>=deadline){output.clear();return false;}
         auto* next=read<void*>(node);
         const auto cached_chunk=read<void*>(node,0x18);
         // Empty chunks dominate; avoid a native lookup for those.
@@ -82,6 +110,7 @@ inline bool capture(void* player,unsigned char* image,std::vector<Storage>& outp
                 const auto actor_count=read<std::size_t>(chunk,0x13A8);
                 auto* actor_node=read<void*>(actors_head);
                 for(std::size_t actor_index=0;actor_index<actor_count&&actor_count<=65536&&actor_node&&actor_node!=actors_head;++actor_index) {
+                    if(GetTickCount64()>=deadline){output.clear();return false;}
                     auto* actor=read<void*>(actor_node,0x18);
                     const auto key=read<std::uint32_t>(actor_node,0x10);
                     const auto position=read<Position>(actor,8);
@@ -94,22 +123,32 @@ inline bool capture(void* player,unsigned char* image,std::vector<Storage>& outp
                             Storage storage{position,{},kind};
                             // Native BlockActor bounds represent the occupied block, including both
                             // halves of double containers as separate block records.
-                            for(int axis=0;axis<6;++axis)storage.bounds[axis]=read<float>(actor,0x48+axis*4);
-                            bool valid=true;
-                            const int components[]{position.x,position.y,position.z};
-                            for(int axis=0;axis<3;++axis)valid=valid&&std::isfinite(storage.bounds[axis])&&
-                                std::isfinite(storage.bounds[axis+3])&&storage.bounds[axis+3]>storage.bounds[axis]&&
-                                std::abs(storage.bounds[axis]-static_cast<float>(components[axis]))<2&&
-                                std::abs(storage.bounds[axis+3]-static_cast<float>(components[axis]+1))<2;
-                            if(valid)output.push_back(storage);
+                            for(int axis=0;axis<6;++axis)storage.bounds[axis]=read<float>(actor,selected.bounds+axis*4);
+                            if(valid_bounds(storage))output.push_back(storage);
                         }
                     }
                     actor_node=read<void*>(actor_node);
                 }
+                if(actor_node!=actors_head||read<void*>(chunk,0x13A0)!=actors_head||
+                   read<std::size_t>(chunk,0x13A8)!=actor_count){output.clear();return false;}
             }
         }
         node=next;
     }
+    if(node!=head||read<void*>(source,0x78)!=head||read<std::size_t>(source,0x80)!=count||
+       read<void*>(player,0x1C8)!=dimension){output.clear();return false;}
     return true;
+}
+inline bool capture(void* player,unsigned char* image,std::vector<Storage>& output,Observer observer=nullptr) {
+    output.clear();const auto* selected=profile(image);if(!selected)return false;
+    auto* dimension=read<void*>(player,0x1C8);auto* region=read<void*>(dimension,0xF0);
+    auto* table=read<void*>(region);
+    if(read<void*>(table,0x10)!=image+selected->get_block||read<void*>(table,0x148)!=image+selected->get_chunk)return false;
+    auto* source=read<void*>(region,0x28);
+    if(read<void*>(read<void*>(source),0x18)!=image+selected->chunk_source)return false;
+    using GetChunk=void*(__fastcall*)(void*,const void*);
+    using GetBlock=void*(__fastcall*)(void*,const Position*);
+    return capture_loaded(player,dimension,region,source,*selected,output,
+        reinterpret_cast<GetChunk>(image+selected->get_chunk),reinterpret_cast<GetBlock>(image+selected->get_block),observer);
 }
 }

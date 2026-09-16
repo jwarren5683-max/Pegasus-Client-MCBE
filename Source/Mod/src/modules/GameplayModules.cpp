@@ -36,6 +36,7 @@ std::atomic<unsigned> pending_keys{};
 std::atomic<unsigned> trigger_targets{triggerbot::all_targets};
 std::atomic_bool trigger_ready{},airjump_ready{};
 std::atomic_bool esp_ready{};
+std::atomic_bool chest_ready{},chest_snapshot_logged{},chest_draw_logged{};
 std::atomic_bool esp_snapshot_logged{},esp_draw_logged{};
 airjump::Requests airjump_requests;
 std::atomic<float> jetpack_speed{jetpack::default_speed};
@@ -77,7 +78,7 @@ template<class T> T read(const void* object, std::size_t offset = 0) {
 void release_trigger_mouse();
 
 bool on(GameplayFeature feature) {
-    if(integration::server_safety::remote_session() && feature!=GameplayFeature::auto_leave&&feature!=GameplayFeature::esp) return false;
+    if(integration::server_safety::remote_session() && feature!=GameplayFeature::auto_leave&&feature!=GameplayFeature::esp&&feature!=GameplayFeature::chest_esp) return false;
     if(integration::navigation_owns_controls.load() &&
        (feature==GameplayFeature::autotool||feature==GameplayFeature::phase||feature==GameplayFeature::airjump||
         feature==GameplayFeature::autosprint||feature==GameplayFeature::triggerbot||feature==GameplayFeature::jetpack))return false;
@@ -359,6 +360,9 @@ void capture_storage(void* player) {
             const auto* b=container.bounds;const auto kind=static_cast<unsigned>(container.kind);
             Box box{{b[0],b[1],b[2]},{b[3],b[4],b[5]},colors[kind]};box.storage_kind=kind;next.boxes.push_back(box);
         }
+        if(!next.boxes.empty()&&!chest_snapshot_logged.exchange(true)) {
+            char message[128]{};std::snprintf(message,sizeof(message),"ChestESP: native tick published %zu validated storage bounds.",next.boxes.size());Logger::instance().info(message);
+        }
     }
     std::lock_guard lock(frame_mutex);storage_frame=std::move(next);
 }
@@ -582,6 +586,9 @@ void __fastcall esp_tick_12650(void* player) {
         try {capture_esp_12650();} catch(...) {
             std::lock_guard lock(frame_mutex);frame=Frame{};
         }
+    }
+    if(chest_ready.load()&&on(GameplayFeature::chest_esp)) {
+        try {capture_storage(player);}catch(...) {std::lock_guard lock(frame_mutex);storage_frame=Frame{};}
     }
 }
 
@@ -900,7 +907,9 @@ void initialize() {
            !swap_slot(0xE8E1BC0+0xC0,reinterpret_cast<void*>(original_tick),reinterpret_cast<void*>(&esp_tick_12650))) {
             Logger::instance().info("ESP unavailable: exact 26.50 local tick slot/prologue mismatch.");return;
         }
-        Logger::instance().info("ESP: 26.50 read-only packed snapshots connected to validated native local tick; waiting for local registry and camera validation. No native actor-list calls.");return;
+        Logger::instance().info("ESP: 26.50 read-only packed snapshots connected to validated native local tick; waiting for local registry and camera validation. No native actor-list calls.");
+        chest_ready=chest_esp::profile_verified(image);
+        Logger::instance().info(chest_ready.load()?"ChestESP: exact 26.50 block/chunk lookup prologues verified; native local tick and +0x50 storage bounds connected.":"ChestESP unavailable: exact 26.50 native storage profile mismatch.");return;
     }
     if(nt->FileHeader.TimeDateStamp!=0x6A8378BA||nt->OptionalHeader.SizeOfImage!=0x12888000)return;
     struct Slot { std::uintptr_t rva,target; void* hook; };
@@ -945,7 +954,7 @@ ModuleCategory GameplayModule::category() const noexcept {
     default:return ModuleCategory::movement;}
 }
 bool GameplayModule::available() const noexcept {
-    if(feature_==GameplayFeature::esp) {
+    if(feature_==GameplayFeature::esp||(feature_==GameplayFeature::chest_esp&&integration::is_release_12650(integration::current_bedrock_build()))) {
         if(integration::is_release_12650(integration::current_bedrock_build())) {
             static std::mutex validation_mutex;std::lock_guard lock(validation_mutex);
             static double previous{};const double now=esp_time();
@@ -961,13 +970,13 @@ bool GameplayModule::available() const noexcept {
                 esp_ready=valid;
             }
         }
-        return esp_ready.load();
+        return esp_ready.load()&&(feature_!=GameplayFeature::chest_esp||chest_ready.load());
     }
     return ready.load() && (feature_!=GameplayFeature::jetpack || jetpack_ready.load()) &&
         (feature_!=GameplayFeature::airjump || airjump_ready.load()) && (feature_!=GameplayFeature::triggerbot ||
         (trigger_ready.load() && integration::game_context_detail::picker_ready.load()));
 }
-bool GameplayModule::allowed_on_remote_server() const noexcept { return feature_==GameplayFeature::auto_leave||feature_==GameplayFeature::esp; }
+bool GameplayModule::allowed_on_remote_server() const noexcept { return feature_==GameplayFeature::auto_leave||feature_==GameplayFeature::esp||feature_==GameplayFeature::chest_esp; }
 void GameplayModule::on_register(EventBus&) { initialize(); }
 void GameplayModule::on_enable() { if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;Logger::instance().info("Trigger Bot enabled for local-world input delivery.");} if(feature_==GameplayFeature::auto_leave){++auto_leave_revision;Logger::instance().info("Auto Leave enabled.");} flags[static_cast<unsigned>(feature_)]=true; }
 void GameplayModule::on_disable() { flags[static_cast<unsigned>(feature_)]=false; if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;release_trigger_mouse();Logger::instance().info("Trigger Bot disabled.");} if(feature_==GameplayFeature::auto_leave)++auto_leave_revision; }
@@ -1041,6 +1050,7 @@ void GameplayModule::draw_overlay(void* target,int width,int height) noexcept {
             const auto screen=[&](Vec3 v){return POINT{static_cast<LONG>(std::clamp(width*0.5F*(1+v.x*copy.scale_x/v.z),-100000.0F,100000.0F)),static_cast<LONG>(std::clamp(height*0.5F*(1-v.y*copy.scale_y/v.z),-100000.0F,100000.0F))};};
             auto p=screen(a),q=screen(b);MoveToEx(dc,p.x,p.y,nullptr);LineTo(dc,q.x,q.y);
             if(!storage&&!esp_draw_logged.exchange(true))Logger::instance().info("ESP: projected entity edges submitted to the live overlay.");
+            if(storage&&!chest_draw_logged.exchange(true))Logger::instance().info("ChestESP: projected storage edges submitted to the live overlay.");
         }
         SelectObject(dc,old);DeleteObject(pen);
     }

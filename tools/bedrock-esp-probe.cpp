@@ -84,7 +84,28 @@ int main(int argc,char** argv) {
                         }
                     }
                 }
-                if(packed&&camera&&camera_origin){CloseHandle(process);return 0;}
+                if(packed&&camera&&camera_origin){
+                    std::uintptr_t region{},rt{},source{},st{},head{},node{},count{},block_fn{},chunk_fn{},source_fn{};
+                    read(dimension+0xF0,&region,8);read(region,&rt,8);read(region+0x28,&source,8);read(source,&st,8);
+                    read(rt+0x10,&block_fn,8);read(rt+0x148,&chunk_fn,8);read(st+0x18,&source_fn,8);
+                    read(source+0x78,&head,8);read(source+0x80,&count,8);read(head,&node,8);
+                    short min_y{},max_y{};read(region+0x3A,&min_y,2);read(region+0x38,&max_y,2);
+                    std::printf("Storage region=%llX source=%llX blockRva=%llX chunkRva=%llX sourceRva=%llX map=%llX count=%llu heights=%d,%d\n",region,source,block_fn-base,chunk_fn-base,source_fn-base,head,count,min_y,max_y);
+                    for(unsigned n=0;n<count&&n<4096&&node&&node!=head;++n){std::uintptr_t next{},chunk{},actors_head{},actors_count{},an{};int coords[2]{};
+                        if(!read(node,&next,8)||!read(node+0x18,&chunk,8)||!read(node+0x10,coords,8))break;
+                        read(chunk+0x13A0,&actors_head,8);read(chunk+0x13A8,&actors_count,8);
+                        if(actors_count&&actors_count<65536&&read(actors_head,&an,8)) {
+                            std::printf("Chunk %d,%d actor map count=%llu\n",coords[0],coords[1],actors_count);
+                            for(unsigned j=0;j<actors_count&&j<12&&an&&an!=actors_head;++j){std::uintptr_t a{},vt{},a_next{};int pos[3]{};float box[6]{};unsigned key{};
+                                if(!read(an,&a_next,8)||!read(an+0x18,&a,8))break;
+                                read(an+0x10,&key,4);read(a,&vt,8);read(a+8,pos,12);read(a+0x50,box,24);
+                                std::printf("BlockActor vtRva=%llX key=%X pos=%d,%d,%d box=%.1f %.1f %.1f - %.1f %.1f %.1f\n",vt-base,key,pos[0],pos[1],pos[2],box[0],box[1],box[2],box[3],box[4],box[5]);an=a_next;
+                            }
+                        }
+                        node=next;
+                    }
+                    CloseHandle(process);return 0;
+                }
                 if(matches>=12){CloseHandle(process);return 6;}
             }
         }

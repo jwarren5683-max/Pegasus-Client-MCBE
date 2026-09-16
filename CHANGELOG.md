@@ -1,5 +1,12 @@
 # Changelog
 
+## ChestESP current-version port — 2026-09-16
+
+- Connect ChestESP to the verified 26.50 local-player tick and independent readiness rather than the unavailable legacy gameplay gate. Preserve user-confirmed ESP and terrain renderer paths.
+- Verify current block/chunk/source lookup prologues and vtable targets; port BlockActor bounds from +0x48 to live-verified +0x50. Preserve the legacy profile.
+- Use safe RPM metadata/string reads, position/bounds validation, bounded refresh and changing/broken-list rejection. Preserve five independent storage-family filters/colors. No chest contents or world/device changes.
+- Add both-profile map traversal fixtures with mock native queries, stale-key/no-query, dimension transition, corrupt list/bounds and retired-pointer checks. Visible ChestESP and regression behavior still require a fresh-session user test.
+
 ## ESP-first repair; suspend unsuccessful Reach — 2026-09-16
 
 - User confirmed the repaired ESP works visibly in the local test world. Private-server behavior and long-session stability remain unverified; no additional binary changes were made for this confirmation.
