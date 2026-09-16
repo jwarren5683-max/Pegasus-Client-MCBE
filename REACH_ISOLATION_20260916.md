@@ -25,6 +25,22 @@ game modes and preservation of the shared ESP player context. Existing tests
 cover independent sliders, exact native SSE gates, restoration and allocation.
 Fresh build directory: `C:/pegasus-reach-isolated-20260916`.
 
+Clean full Release rebuild completed; all 22 tests passed. Launcher hash/load
+self-test passed in a disposable process. Test candidate loaded once into the
+user-opened Minecraft session (PID 21084). Native initialization verified Reach
+hooks at 18:05:11 and Fullbright, X-ray, ESP and ChestESP hooks at 18:05:12.
+Actual extended targeting/damage/block breaking remain unverified.
+Candidate DLL SHA256: E08CA009BCBF5A8C2459CEC39571647D66035EA773DA757FD70F950D444AD5E6.
+Candidate launcher SHA256:
+DA2C2F520C6D1D808306761B50FCBFC35DA5799EA58C6DECF732FE81D2FF7742.
+Desktop candidate: `Pegasus Clients/Pegasus Reach TEST - 2026-09-16`.
+The confirmed normal desktop package remains unchanged.
+
+Computer-use screen capture failed twice with
+`SetIsBorderRequired failed: No such interface supported (0x80004002)`;
+Minecraft exposed no accessibility tree. Thus actual aiming/clicking requires
+the user's help; synthetic passes and injection do not prove interactions work.
+
 This is a candidate, not an in-game success claim. Actual targeting, successful
 block breaking and entity damage beyond vanilla distance require a fresh local
 Survival world test, with one client loaded. Remote/private-server enforcement
