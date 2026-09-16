@@ -159,6 +159,9 @@ int main(){
     static_assert(sizeof(GameString)==32);
     static_assert(sizeof(OptionalString)==40);
     GameplayModule jump(GameplayFeature::airjump),phase(GameplayFeature::phase),esp(GameplayFeature::esp),leave(GameplayFeature::auto_leave);
+    esp_ready=false;check(!esp.available(),"unverified ESP remains unavailable");
+    esp_ready=true;check(esp.available(),"verified ESP readiness is independent of other feature flags");
+    esp_ready=false;
     pending_keys=0;
     jump.on_key_down(VK_SPACE); // key may already be released before the tick
     check((pending_keys.exchange(0)&16)!=0,"short airborne jump survives until tick");
@@ -211,3 +214,4 @@ int main(){
     check(!chest_esp::belongs_to_chunk({-1,320,-17},-1,-2,-64,320,0x1800F0F),"height outside dimension rejected");
     std::puts("PASS: short input retention, one-shot consumption, diagonal input, native string ABI, ESP setting");
 }
+

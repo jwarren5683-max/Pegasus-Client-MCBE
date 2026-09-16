@@ -230,8 +230,8 @@ bool camera_sample(void* player,CameraSample& sample) {
     void* table{};void* client{};void* renderer{};void* renderer_player{};
     const auto build=integration::current_bedrock_build();
     return camera_read(player,0,&table,sizeof(table)) &&
-        (integration::is_release_12645(build)?table==image+0xE820EC0:
-         integration::is_release_12650(build)&&player==integration::current_player()&&table!=nullptr) &&
+        (table==image+0xE820EC0 ||
+         (esp_ready.load()&&integration::is_release_12650(build)&&player==integration::current_player()&&table!=nullptr)) &&
         camera_read(player,0x1C8,&sample.dimension,sizeof(sample.dimension)) && sample.dimension &&
         camera_read(player,0xD70,&client,sizeof(client)) &&
         camera_read(client,0x418,sample.view,sizeof(sample.view)) &&
@@ -861,8 +861,13 @@ void initialize() {
     if(!image||dos->e_magic!=IMAGE_DOS_SIGNATURE)return;
     const auto* nt=reinterpret_cast<const IMAGE_NT_HEADERS64*>(image+dos->e_lfanew);
     if(nt->FileHeader.TimeDateStamp==0x6AA482FD&&nt->OptionalHeader.SizeOfImage==0x12C01000){
-        runtime_actor_list=find_runtime_actor_list();esp_ready=runtime_actor_list!=nullptr;
-        Logger::instance().info(esp_ready.load()?"ESP ready for Minecraft 1.26.5101.0; thread-safe runtime actor list signature verified.":
+        runtime_actor_list=find_runtime_actor_list();
+        // A unique historical prologue is only a candidate, not proof of the
+        // return ABI, Level layout, or safe calling thread on this build.
+        // Never call that candidate from the overlay before verifying those.
+        esp_ready=false;
+        Logger::instance().info(runtime_actor_list?
+            "ESP unavailable: 26.50 actor-list candidate found; ABI, layout and calling thread require verification.":
             "ESP unavailable: Minecraft 1.26.5101.0 runtime actor-list signature was not unique.");return;
     }
     if(nt->FileHeader.TimeDateStamp!=0x6A8378BA||nt->OptionalHeader.SizeOfImage!=0x12888000)return;
@@ -893,7 +898,7 @@ void initialize() {
     trigger_ready=verify_triggerbot();
     Logger::instance().info(trigger_ready.load()?"Trigger Bot ready for local worlds; safe input delivery active.":
         "Trigger Bot unavailable: target-picker signature mismatch.");
-    ready=true;Logger::instance().info("Native gameplay modules initialized for Minecraft 1.26.4501.0.");
+    esp_ready=true;ready=true;Logger::instance().info("Native gameplay modules initialized for Minecraft 1.26.4501.0.");
 }
 }
 
@@ -962,7 +967,7 @@ void GameplayModule::on_key_up(unsigned code) noexcept {
 }
 void GameplayModule::draw_overlay(void* target,int width,int height) noexcept {
     const bool storage=feature_==GameplayFeature::chest_esp;
-    if((feature_!=GameplayFeature::esp&&!storage)||!enabled())return;
+    if((feature_!=GameplayFeature::esp&&!storage)||!enabled()||!available())return;
     if(feature_==GameplayFeature::esp&&integration::is_release_12650(integration::current_bedrock_build()))capture_esp_12650();
     Frame copy;{std::lock_guard lock(frame_mutex);copy=storage?storage_frame:frame;}
     auto& camera_cache=storage?last_storage_camera:last_camera;

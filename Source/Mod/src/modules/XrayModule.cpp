@@ -72,7 +72,11 @@ bool readable(uintptr_t p, size_t size) noexcept {
     return p >= reinterpret_cast<uintptr_t>(m.BaseAddress) &&
         p + size <= reinterpret_cast<uintptr_t>(m.BaseAddress) + m.RegionSize;
 }
-template<class T> T get(uintptr_t p) noexcept { T v{}; if(readable(p,sizeof(T))) std::memcpy(&v,reinterpret_cast<void*>(p),sizeof(T)); return v; }
+template<class T> T get(uintptr_t p) noexcept {
+    T v{}; SIZE_T copied{};
+    if (!p || !ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<void*>(p),&v,sizeof(T),&copied) || copied!=sizeof(T)) return {};
+    return v;
+}
 bool name_of(uintptr_t type, char (&out)[160], size_t& length) noexcept {
     const uintptr_t text=type+0xE8;
     if(!readable(text,32)) return false;
@@ -175,15 +179,27 @@ bool discover_graphics_registry() {
     const auto* dos=reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
     const auto* nt=reinterpret_cast<const IMAGE_NT_HEADERS64*>(base+dos->e_lfanew);
     const auto* sections=IMAGE_FIRST_SECTION(nt);
+    const auto deadline=GetTickCount64()+1000;
     for(unsigned index=0;index<nt->FileHeader.NumberOfSections;++index){const auto& section=sections[index];
-        if(section.Characteristics&IMAGE_SCN_MEM_EXECUTE)continue;
+        // The vector is mutable global storage, not executable code or RTTI.
+        // Copy bounded windows once instead of calling VirtualQuery twice per
+        // eight-byte word across hundreds of megabytes during registration.
+        if((section.Characteristics&IMAGE_SCN_MEM_EXECUTE)||!(section.Characteristics&IMAGE_SCN_MEM_WRITE))continue;
         const auto start=static_cast<uintptr_t>(section.VirtualAddress);
         const auto size=static_cast<uintptr_t>(section.Misc.VirtualSize);
         if(start>=s.image_size||size<16)continue;
         const auto limit=(std::min)(size,s.image_size-start);
-        for(uintptr_t offset=0;offset+16<=limit;offset+=8){const auto address=s.base+start+offset;
-            const auto begin=get<uintptr_t>(address),end=get<uintptr_t>(address+8);
+        std::array<unsigned char,65536+16> window{};
+        for(uintptr_t chunk=0;chunk<limit;chunk+=65536){
+            if(GetTickCount64()>=deadline){Logger::instance().info("x-ray: registry discovery budget exhausted; no graphics modified.");return false;}
+            const auto length=(std::min<uintptr_t>)(window.size(),limit-chunk);SIZE_T copied{};
+            if(!ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<void*>(s.base+start+chunk),window.data(),length,&copied)||copied!=length)continue;
+        for(uintptr_t offset=0;offset<65536&&offset+24<=length;offset+=8){const auto address=s.base+start+chunk+offset;
+            if((offset&4095)==0&&GetTickCount64()>=deadline){Logger::instance().info("x-ray: registry discovery budget exhausted; no graphics modified.");return false;}
+            uintptr_t begin{},end{},capacity{};
+            std::memcpy(&begin,window.data()+offset,8);std::memcpy(&end,window.data()+offset+8,8);std::memcpy(&capacity,window.data()+offset+16,8);
             if(!begin||end<=begin||(end-begin)%8)continue;const auto count=(end-begin)/8;
+            if(capacity<end||capacity-begin>160000||(capacity-begin)%8)continue;
             if(count<64||count>20000||!readable(begin,(std::min<uintptr_t>)(end-begin,256)))continue;
             const auto object=get<uintptr_t>(begin);const auto table=get<uintptr_t>(object);
             if(!object||!table||table<s.base||table>=s.base+s.image_size||!readable(object,0x80))continue;
@@ -191,6 +207,7 @@ bool discover_graphics_registry() {
             std::vector<Graphics> entries;uintptr_t found_begin{},found_end{};
             if(snapshot(entries,found_begin,found_end,XrayModule::default_visibility))return true;
             s.graphics_vector=0;s.graphics_vtable=0;
+        }
         }
     }
     return false;
@@ -330,9 +347,14 @@ void XrayModule::set_boolean_setting(std::size_t index, bool value) noexcept {
     if(enabled()) state().visibility=visibility_.load();
 }
 void XrayModule::on_enable() { state().visibility=visibility_.load();state().desired=true; }
-void XrayModule::on_disable() { state().desired=false; }
+void XrayModule::on_disable() {
+    auto& s=state();s.desired=false;
+    // Disabled modules do not receive on_tick. Restore adaptive overrides now,
+    // rather than leaving terrain modified until a later re-enable.
+    if(s.adaptive_12650){std::lock_guard guard(s.mutex);if(s.applied){restore_graphics();s.applied=false;}}
+}
 void XrayModule::on_tick() noexcept { if(state().adaptive_12650) adaptive_tick(); }
-XrayModule::~XrayModule() {state().desired=false;}
+XrayModule::~XrayModule() {on_disable();}
 } // namespace utility::modules
 
 namespace utility::integration::terrain_lighting {

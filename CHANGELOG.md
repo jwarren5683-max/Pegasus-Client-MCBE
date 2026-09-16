@@ -1,5 +1,13 @@
 # Changelog
 
+## X-ray lifecycle and ESP safety repair — 2026-09-16
+
+- Replaced unbounded per-word X-ray memory queries with bounded writable-section window scans and vector-capacity checks.
+- Restored adaptive X-ray overrides immediately on disable and destruction; preserve newer engine values.
+- Added a synthetic real-code registry/lifecycle test. Live 26.50 registry and immediate mesh rebuild remain unresolved.
+- Repaired old-version ESP readiness and the camera-fixture regression; 26.50 historical actor-list candidates are no longer called without ABI/layout/thread verification.
+- This supersedes the prior section's claim that a signature match verifies thread-safe ESP. New-version ESP remains N/A.
+
 ## Minecraft Bedrock 26.50 ESP and X-ray repair — 2026-09-15
 
 - Added a 26.50 ESP path that resolves Bedrock's uniquely matched, thread-safe runtime actor-list function instead of iterating the shared entity registry from the overlay thread.
