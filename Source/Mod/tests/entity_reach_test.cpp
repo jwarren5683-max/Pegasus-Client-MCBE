@@ -4,11 +4,25 @@
 #include <cstdlib>
 
 using namespace utility::modules;
+namespace integration = utility::integration;
 void check(bool ok, const char* message) {
     if (!ok) { std::fprintf(stderr, "FAIL: %s\n", message); std::exit(1); }
 }
 
 int main() {
+    struct MockMode { void* table; void* player; } mode{};
+    int local{}, server{};
+    mode.player=&local;
+    check(local_range_query(&mode,&local), "local range query accepted");
+    check(!local_range_query(&mode,&server), "other player range left vanilla");
+    check(!local_range_query(&mode,nullptr), "missing local player left vanilla");
+    check(!local_range_query(nullptr,&local), "null game mode rejected");
+    check(!local_range_query(reinterpret_cast<void*>(1),&local), "unreadable game mode safely rejected");
+    integration::game_context_detail::player.store(&local);
+    mode.player=&server;
+    check(!local_range_query(&mode,integration::current_player()) &&
+        integration::current_player()==&local, "server query cannot replace ESP local context");
+    integration::game_context_detail::player.store(nullptr);
     check(release_12650.timestamp == 0x6AA482FD && release_12650.image_size == 0x12C01000,
         "26.50 Reach profile matches the installed executable");
     check(release_12650.pick_range_rva == 0x259FC40 &&

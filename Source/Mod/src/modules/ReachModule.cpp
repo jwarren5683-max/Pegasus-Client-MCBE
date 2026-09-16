@@ -64,6 +64,15 @@ std::atomic<ReachModule*> active_module{};
 std::atomic_uint32_t active_calls{};
 thread_local float selected_block_range = 5.0F;
 thread_local float selected_vanilla_range = 5.0F;
+// On 26.50 the verified LocalPlayer tick owns the shared player context.
+// Range queries also run for server players: never publish those as LocalPlayer.
+bool local_range_query(void* game_mode, void* local_player) noexcept {
+    if (!game_mode || !local_player) return false;
+    void* candidate{};
+    SIZE_T read{};
+    return ReadProcessMemory(GetCurrentProcess(), static_cast<const std::byte*>(game_mode) + 8,
+        &candidate, sizeof(candidate), &read) && read == sizeof(candidate) && candidate == local_player;
+}
 struct PickRanges { float ray, block; };
 PickRanges pick_ranges(float vanilla, bool entity_on, float entity, bool block_on, float block) noexcept {
     const float block_limit=block_on?block:vanilla;
@@ -348,10 +357,6 @@ void ReachModule::set_value(float distance) noexcept {
 }
 
 void ReachModule::on_register(EventBus&) {
-    if(integration::is_release_12650(integration::current_bedrock_build())) {
-        Logger::instance().info("Reach suspended in the ESP repair release: no 26.50 reach gates or range hooks installed.");
-        return;
-    }
     if (install_hooks()) {
         Logger::instance().info(release_12650_
             ? "Reach hooks installed for Minecraft 1.26.5101.0; verified ray, Survival cap and final crosshair distance gates connected. Local interaction maximum includes both independent sliders; remote servers may reject extended interactions."
@@ -378,12 +383,16 @@ void ReachModule::on_disable() {
 float __fastcall ReachModule::pick_range_hook(
     void* game_mode, const int* input_mode, bool include_liquids) noexcept {
     const ActiveCall call;
-    integration::observe_game_mode(game_mode);
     ReachModule* module = active_module.load(std::memory_order_acquire);
     if (module == nullptr || module->original_pick_range_ == nullptr) {
         return 3.0F;
     }
     const float vanilla = module->original_pick_range_(game_mode, input_mode, include_liquids);
+    if (module->release_12650_) {
+        if (!local_range_query(game_mode, integration::current_player())) return vanilla;
+    } else {
+        integration::observe_game_mode(game_mode);
+    }
     const auto ranges=pick_ranges(vanilla,module->active_.load(),module->value(),module->block_active_.load(),module->block_value());
     selected_block_range=ranges.block;
     selected_vanilla_range=vanilla;
@@ -396,12 +405,16 @@ float __fastcall ReachModule::pick_range_hook(
 
 float __fastcall ReachModule::max_pick_range_hook(void* game_mode) noexcept {
     const ActiveCall call;
-    integration::observe_game_mode(game_mode);
     ReachModule* module = active_module.load(std::memory_order_acquire);
     if (module == nullptr || module->original_max_pick_range_ == nullptr) {
         return 6.7F;
     }
     const float vanilla = module->original_max_pick_range_(game_mode);
+    if (module->release_12650_) {
+        if (!local_range_query(game_mode, integration::current_player())) return vanilla;
+    } else {
+        integration::observe_game_mode(game_mode);
+    }
     return pick_ranges(vanilla,module->active_.load(),module->value(),module->block_active_.load(),module->block_value()).ray;
 }
 
@@ -417,7 +430,8 @@ void __fastcall ReachModule::final_range_hook(void* hit, void* player, float ran
     // Only the crosshair picker receives the combined ray. Other callers retain
     // their own native ranges. A longer entity ray must not extend block reach.
     const bool picker=reinterpret_cast<std::uintptr_t>(_ReturnAddress())==base+module->picker_return_rva_;
-    if (picker && hit && (module->active_.load()||module->block_active_.load())) {
+    if (picker && hit && (!module->release_12650_ || player == integration::current_player()) &&
+        (module->active_.load()||module->block_active_.load())) {
         const int type = *reinterpret_cast<const int*>(static_cast<const std::byte*>(hit) + 0x18);
         range=final_range(type,range,selected_block_range,module->active_.load(),module->value(),selected_vanilla_range);
         if((module->active_.load()||module->block_active_.load())&&!module->final_reported_.exchange(true)) {
@@ -489,6 +503,8 @@ bool ReachModule::install_hooks() noexcept {
 
     original_pick_range_ = reinterpret_cast<PickRangeFunction>(pick_target);
     original_max_pick_range_ = reinterpret_cast<MaxPickRangeFunction>(trampoline);
+    // Publish the ownership policy before any callback becomes callable.
+    release_12650_ = profile == &release_12650;
     active_module.store(this, std::memory_order_release);
 
     if (!exchange_slot(pick_slots_[0], reinterpret_cast<void*>(&pick_range_hook)) ||
