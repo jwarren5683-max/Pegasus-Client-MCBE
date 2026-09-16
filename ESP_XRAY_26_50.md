@@ -48,6 +48,17 @@ pinned in the currently running process; do not inject a second copy.
 
 ## Test procedure
 
+### Reach repair test
+
+The same packaged launcher now also connects the verified 26.50 Survival
+entity cap and final hit-distance gate. In a disposable local world, test
+EntityReach alone, BlockReach alone and both together at 7 blocks, then disable
+both and check vanilla ranges return. Test actual entity interaction and block
+mining/placement, not only crosshair highlighting. The log reports native pick
+callback slider ranges and the final crosshair gate when they execute. Working
+X-ray and Fullbright code is unchanged. Remote servers can still reject extended
+interactions; this repair does not bypass server enforcement.
+
 1. Fully close Minecraft and any older Pegasus launcher.
 2. Start Minecraft and enter a local world.
 3. Run `START THIS - Pegasus Native Xray Fix.exe` once and select the fresh

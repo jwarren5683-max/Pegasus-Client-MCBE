@@ -1,5 +1,14 @@
 # Changelog
 
+## 26.50 Reach native distance gates — 2026-09-16
+
+- User confirmed Fullbright works. Working X-ray/Fullbright implementation is unchanged by this reach repair.
+- Connected exact 26.50 Survival cap reads at `0x4BCC5C`, `0x4BCC65`, `0x4BCDAC` and HitResult distance validation at `0xEC3D80`, restricted to native crosshair return site `0x4BD1A3`. Checked picker entry/call ABI, function unwind boundaries and three reads of the original 3.0 float. Redirect only these reads to private storage; never alter the shared constant.
+- Maximum local interaction range now includes entity as well as block sliders; final hit validation still separates entity and block limits. Disabling returns to vanilla ranges.
+- Added both-version execution tests for the actual relocated SSE reads, boundary rejection through 10 blocks, mismatched-signature/no-partial-write checks and restoration.
+- Added bounded runtime diagnostics showing the actual native targeting callback and final gate received slider values. Kept unrelated new-version Trigger Bot/crosshair integration gated.
+- Local targeting/interaction effects need a fresh-session test. Remote servers can reject extended interaction ranges; no server bypass is implemented or promised.
+
 ## 26.50 Fullbright renderer repair — 2026-09-16
 
 - User confirmed the native X-ray build works in-world; runtime logs also show application, chunk refresh and disable restoration.
