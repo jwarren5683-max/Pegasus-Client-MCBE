@@ -1,5 +1,13 @@
 # Changelog
 
+## Native 26.50 X-ray renderer repair — 2026-09-16
+
+- Connected the exact mapped 26.50 coordinator update (`0x1C9D140`), rebuild-all (`0x1C9C6D0`) and constructor-established vtable (`0xE7D5B80`). Require matching fingerprint, prologue bytes, vtable destructor and both native call sites before installing.
+- Apply, restore and request loaded-chunk refresh on the engine's own coordinator thread, independently of overlay/menu ticks. Turning off restores through that same callback.
+- Added actual ModuleManager-to-X-ray and native callback tests, including two bounded rebuild passes, original-callback forwarding, disable restoration and no per-frame refresh storms.
+- Kept 26.50 Fullbright/old lighting code patches unavailable; kept ESP unavailable pending verified interfaces.
+- Rebuilt from a fresh directory to eliminate mixed stale objects. In-world visual validation still requires a clean game restart to load the new DLL.
+
 ## X-ray lifecycle and ESP safety repair — 2026-09-16
 
 - Replaced unbounded per-word X-ray memory queries with bounded writable-section window scans and vector-capacity checks.
@@ -82,4 +90,3 @@
 ### Known limitation
 
 Extended reach is a client-side feature. Multiplayer servers can enforce their own reach distance and reject attacks or interactions outside that limit.
-

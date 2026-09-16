@@ -15,7 +15,7 @@ using System.Windows.Forms;
 
 internal static class Program {
     internal const string DllName = "BedrockUtilityFramework.Xray.dll";
-    internal const string ExpectedHash = "B8D84231B1FD4A3B15D3F0DEDAB08C7E181F222D08F75A4E3EE381BBDAA70D83";
+    internal const string ExpectedHash = "71BED71DF060BB63B17ECCA5A945A926590383B81019D353775F04EABA5EA0AD";
     internal static string DllPath { get { return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, DllName); } }
     [STAThread] static int Main(string[] args) {
         if (args.Length == 1 && args[0] == "--test-host") { Thread.Sleep(30000); return 0; }
@@ -40,6 +40,19 @@ internal static class Program {
                 using (var bmp = new Bitmap(form.Width, form.Height)) { form.DrawToBitmap(bmp, new Rectangle(Point.Empty, bmp.Size)); bmp.Save(args[1]); }
             }
             return 0;
+        }
+        if (args.Length == 2 && args[0] == "--inject-pid") {
+            try {
+                int gameId;
+                if (!Int32.TryParse(args[1], out gameId) || gameId <= 0) throw new IOException("Supply a valid Minecraft process ID.");
+                VerifyDll();
+                using (Process game = Process.GetProcessById(gameId)) {
+                    if (!String.Equals(game.ProcessName, "Minecraft.Windows", StringComparison.OrdinalIgnoreCase)) throw new IOException("The selected process is not Minecraft Bedrock.");
+                    Loader.Inject(game, DllPath);
+                }
+                Console.WriteLine("Loaded successfully into the selected Minecraft session. Press Tab to open the menu.");
+                return 0;
+            } catch (Exception e) { Console.Error.WriteLine(e.Message); return 1; }
         }
         if (args.Length == 1 && args[0] == "--inject") {
             try {
@@ -222,4 +235,3 @@ internal static class Loader {
         }
     }
 }
-

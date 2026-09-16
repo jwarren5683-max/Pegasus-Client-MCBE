@@ -135,7 +135,15 @@ bool process_module(HANDLE process, std::uintptr_t& base, std::wstring& path) {
 
 } // namespace
 
-int wmain() {
+int wmain(int argc, wchar_t** argv) {
+    DWORD requested_pid{};
+    const wchar_t* dump_path{};
+    if(argc!=1){
+        if((argc!=3&&argc!=5)||_wcsicmp(argv[1],L"--pid")!=0||(argc==5&&_wcsicmp(argv[3],L"--dump-image")!=0)){std::fprintf(stderr,"Usage: BedrockCompatibilityScanner [--pid PID [--dump-image NEW_FILE]]\n");return 1;}
+        wchar_t* tail{};const auto value=std::wcstoul(argv[2],&tail,10);
+        if(!value||!tail||*tail){std::fprintf(stderr,"Invalid process ID.\n");return 1;}requested_pid=value;
+        if(argc==5)dump_path=argv[4];
+    }
     const HANDLE processes = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (processes == INVALID_HANDLE_VALUE) {
         std::fprintf(stderr, "Could not enumerate processes (error %lu).\n", GetLastError());
@@ -146,7 +154,8 @@ int wmain() {
     DWORD pid{};
     if (Process32FirstW(processes, &process_entry)) {
         do {
-            if (_wcsicmp(process_entry.szExeFile, L"Minecraft.Windows.exe") == 0) {
+            if (_wcsicmp(process_entry.szExeFile, L"Minecraft.Windows.exe") == 0 &&
+                (!requested_pid||process_entry.th32ProcessID==requested_pid)) {
                 pid = process_entry.th32ProcessID;
                 break;
             }
@@ -223,6 +232,17 @@ int wmain() {
     std::printf("PE timestamp      : 0x%08X\n", nt->FileHeader.TimeDateStamp);
     std::printf("PE image size     : 0x%08X\n", nt->OptionalHeader.SizeOfImage);
     std::printf("Readable bytes    : %zu / %zu\n\n", copied, image_size);
+    if(dump_path){
+        // Only the main executable image is captured, never arbitrary heap or
+        // world memory. CREATE_NEW prevents overwriting an existing artifact.
+        HANDLE file=CreateFileW(dump_path,GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);
+        DWORD written{};
+        const bool ok=file!=INVALID_HANDLE_VALUE&&WriteFile(file,image.data(),static_cast<DWORD>(image.size()),&written,nullptr)&&written==image.size();
+        if(file!=INVALID_HANDLE_VALUE)CloseHandle(file);
+        if(!ok){std::fprintf(stderr,"Mapped-image capture failed (error %lu).\n",GetLastError());CloseHandle(process);return 9;}
+        std::printf("Mapped executable captured locally; do not upload this artifact.\n");
+        CloseHandle(process);return 0;
+    }
 
     for (const auto& source : patterns) {
         const auto pattern = parse(source);

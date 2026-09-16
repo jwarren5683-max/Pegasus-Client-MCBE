@@ -20,27 +20,43 @@ Disabling immediately restores adaptive overrides without a subsequent tick.
 Synthetic tests cover boundary discovery, application and restoration while
 preserving newer engine values. No world blocks are changed.
 
-The live 26.50 registry and immediate chunk rebuild integration remain
-unverified. Existing meshes only update when Bedrock rebuilds them. Passing
-these tests does not prove X-ray works in-game.
+The running 26.50 executable has now been captured and inspected locally.
+The exact native coordinator update (`0x1C9D140`), rebuild-all function
+(`0x1C9C6D0`) and constructor-established vtable (`0xE7D5B80`) are connected.
+The fingerprint, stack-only patch boundary, rebuild prologue, destructor and
+both engine call sites must match before hooking. The hook applies/restores
+graphics and requests two loaded-chunk refresh passes on the native engine
+thread, independent of menu ticks. Stable enabled state does not refresh every
+frame. Old lighting code patches and Fullbright remain unavailable on 26.50.
+
+The earlier live log confirmed registry discovery, but not terrain application.
+The new native callback path is tested with a synthetic coordinator/registry;
+in-world visual behavior is NOT yet verified. Passing tests is not proof of a
+working in-game effect. Minecraft must restart because the previous DLL is
+pinned in the currently running process; do not inject a second copy.
 
 ## Test procedure
 
 1. Fully close Minecraft and any older Pegasus launcher.
 2. Start Minecraft and enter a local world.
-3. Run `START THIS - Pegasus 26.50 ESP Xray Fix.exe` once.
+3. Run `START THIS - Pegasus Native Xray Fix.exe` once and select the fresh
+   visible game session. The diagnostic `--inject-pid PID` option selects an
+   exact Minecraft process without changing file permissions; it rejects
+   other applications and uses the existing duplicate-DLL safeguard.
 4. Check the log for registry discovery results. ESP is intentionally N/A on
    26.50 pending native-interface verification.
-5. X-ray remains experimental; validate enable AND disable in a disposable
-   local world, including a terrain refresh. Do not treat it as finished.
+5. Enable X-ray. The log should show `enable requested`, then graphics applied
+   and loaded chunks rebuilding. Disabling must restore terrain and refresh it.
+   Validate both in a disposable local world before treating it as finished.
 
-During this pass Minecraft had no visible window; the remaining process denied
-memory access. No security, permissions or WindowsApps ownership was changed.
-All 19 local tests passed. The prior GitHub build failed a camera fixture test;
-that fixture regression is also repaired in this pass.
+The scanner now supports `--pid PID` so it can inspect the visible game rather
+than choosing the inaccessible background process. `--dump-image NEW_FILE`
+captures only the main executable image locally, never arbitrary heap/world
+memory, and refuses to overwrite a file. Never upload the executable capture.
+No security, permissions or WindowsApps ownership was changed.
+The prior GitHub build failed a camera fixture test; that regression is repaired.
 
 If a required signature or registry validation fails, the affected module stays
 `N/A` and writes the reason to
 `%LOCALAPPDATA%\BedrockUtilityFramework\framework.log` rather than guessing an
 address.
-

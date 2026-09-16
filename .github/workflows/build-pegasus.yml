@@ -8,6 +8,7 @@ on:
       - bedrock-26.50-prep
       - codex/pegasus-enhanced-reach-triggerbot-20260915
       - codex/bedrock-26.50-repair
+      - codex/xray-lifecycle-20260916
   pull_request:
 
 jobs:
@@ -25,7 +26,7 @@ jobs:
 
       - name: Build native mod and compatibility scanner
         shell: pwsh
-        run: cmake --build 'C:/pegasus-build' --config Release
+        run: cmake --build 'C:/pegasus-build' --config Release --clean-first --parallel 4
 
       - name: Run native tests
         shell: pwsh

@@ -54,6 +54,10 @@ struct State {
     uintptr_t graphics_vector{};
     uintptr_t graphics_vtable{};
     bool adaptive_12650{};
+    bool native_12650{};
+    uintptr_t coordinator_table{};
+    uintptr_t rebuild_target{};
+    bool snapshot_failure_logged{};
     Tick original{};
     std::recursive_mutex mutex;
     std::vector<Graphics> saved;
@@ -138,7 +142,7 @@ std::vector<LightPatch> lighting_patches(bool fullbright,int level) {
 }
 bool lights(bool on, bool fullbright=false,int level=15) {
     auto& s=state();
-    if(s.adaptive_12650) return true;
+    if(s.adaptive_12650 || s.native_12650) return true;
     const auto patches=lighting_patches(on?fullbright:s.applied_fullbright,on?level:s.applied_level);
     for(const auto& p:patches) {
         const auto& expected=on?p.before:p.after;
@@ -237,7 +241,7 @@ void __fastcall tick_hook(void* coordinator) {
     auto& s=state();
     {
         std::lock_guard guard(s.mutex);
-        if(get<uintptr_t>(reinterpret_cast<uintptr_t>(coordinator))==s.base+coordinator_vtable_rva) {
+        if(get<uintptr_t>(reinterpret_cast<uintptr_t>(coordinator))==s.coordinator_table) {
             const bool xray=s.desired.load();
             const bool fullbright=s.fullbright.load();
             const int level=s.fullbright_level.load();
@@ -268,11 +272,15 @@ void __fastcall tick_hook(void* coordinator) {
                         if(fullbright || (xray && g.retained)) exchange_field(g.object+20,0);
                     }
                     s.applied=true;s.refresh_passes=2;
+                    s.snapshot_failure_logged=false;
                     Logger::instance().info("Terrain lighting: requested x-ray/fullbright graphics applied; rebuilding loaded chunks.");
+                } else if(!s.snapshot_failure_logged) {
+                    s.snapshot_failure_logged=true;
+                    Logger::instance().info("x-ray: enable reached native renderer, but current registry validation failed; terrain left unchanged.");
                 }
             }
             if(s.refresh_passes) {
-                reinterpret_cast<void(__fastcall*)(void*,bool,bool)>(s.base+rebuild_rva)(coordinator,false,false);
+                reinterpret_cast<void(__fastcall*)(void*,bool,bool)>(s.rebuild_target)(coordinator,false,false);
                 --s.refresh_passes;
             }
         }
@@ -309,21 +317,38 @@ bool install() {
     const auto nt=reinterpret_cast<const IMAGE_NT_HEADERS64*>(s.base+dos->e_lfanew);
     if(dos->e_magic!=IMAGE_DOS_SIGNATURE || nt->Signature!=IMAGE_NT_SIGNATURE)return false;
     s.image_size=nt->OptionalHeader.SizeOfImage;
+    uintptr_t selected_tick=s.base+tick_rva;
+    std::array<unsigned char,19> selected_bytes=tick_bytes;
     if(nt->FileHeader.TimeDateStamp==0x6AA482FD&&s.image_size==0x12C01000){
-        s.adaptive_12650=true;
-        if(!discover_graphics_registry()){s.adaptive_12650=false;return false;}
-        s.installed=true;Logger::instance().info("x-ray: Minecraft 1.26.5101.0 BlockGraphics registry verified; adaptive terrain filter ready.");return true;
-    }
+        // Identified from this exact mapped executable: native diagnostic-string
+        // xrefs, unwind boundaries, constructor vtable write and renderer callers.
+        // Apply/restore/rebuild on the engine's coordinator update, never on the
+        // overlay thread. Stack-only stolen instructions need no RIP relocation.
+        selected_tick=s.base+0x1C9D140;selected_bytes[15]=0x48;
+        s.coordinator_table=s.base+0xE7D5B80;s.rebuild_target=s.base+0x1C9C6D0;
+        constexpr unsigned char rebuild_bytes[]{0x55,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x56,0x57,0x53,0x48,0x83,0xEC,0x78,0x48,0x8D,0x6C,0x24,0x70};
+        constexpr unsigned char tick_call[]{0x48,0x8B,0x4B,0x18,0xE8,0x27,0x87,0x4A,0xFD};
+        constexpr unsigned char rebuild_call[]{0x48,0x8B,0x4F,0x18,0x31,0xD2,0x45,0x31,0xC0,0xE8,0xE2,0xF2,0x40,0x01};
+        if(std::memcmp(reinterpret_cast<void*>(selected_tick),selected_bytes.data(),selected_bytes.size())||
+            std::memcmp(reinterpret_cast<void*>(s.rebuild_target),rebuild_bytes,sizeof(rebuild_bytes))||
+            get<uintptr_t>(s.coordinator_table)!=s.base+0x1CBABF0||
+            std::memcmp(reinterpret_cast<void*>(s.base+0x47F4A10),tick_call,sizeof(tick_call))||
+            std::memcmp(reinterpret_cast<void*>(s.base+0x88D3E0),rebuild_call,sizeof(rebuild_call)))return false;
+        if(!discover_graphics_registry())return false;
+        s.native_12650=true;
+    } else {
     if(nt->FileHeader.TimeDateStamp!=0x6A8378BA || s.image_size!=0x12888000) return false;
     s.graphics_vector=s.base+graphics_vector_rva;s.graphics_vtable=s.base+graphics_vtable_rva;
+    s.coordinator_table=s.base+coordinator_vtable_rva;s.rebuild_target=s.base+rebuild_rva;
     if(std::memcmp(reinterpret_cast<void*>(s.base+tick_rva),tick_bytes.data(),tick_bytes.size()) ||
        get<uintptr_t>(s.base+coordinator_vtable_rva)!=s.base+0x99711A0 ||
        std::memcmp(reinterpret_cast<void*>(s.base+rebuild_rva),"\x55\x41\x57\x41\x56\x41\x55\x41\x54\x56\x57\x53\x48\x81\xEC\x88\x00\x00\x00",19)) return false;
     for(const auto& p:texture_patches) if(std::memcmp(reinterpret_cast<void*>(s.base+p.rva),p.before.data(),p.size)) return false;
     for(const auto& p:light_patches) if(std::memcmp(reinterpret_cast<void*>(s.base+p.rva),p.before.data(),p.size)) return false;
+    }
     auto trampoline=static_cast<unsigned char*>(VirtualAlloc(nullptr,64,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE));
     if(!trampoline) return false;
-    std::memcpy(trampoline,tick_bytes.data(),tick_bytes.size());jump(trampoline+19,s.base+tick_rva+19);
+    std::memcpy(trampoline,selected_bytes.data(),selected_bytes.size());jump(trampoline+19,selected_tick+19);
     DWORD ignored{};if(!VirtualProtect(trampoline,64,PAGE_EXECUTE_READ,&ignored)) {VirtualFree(trampoline,0,MEM_RELEASE);return false;}
     FlushInstructionCache(GetCurrentProcess(),trampoline,64);
     std::array<unsigned char,19> patch{};patch.fill(0x90);jump(patch.data(),reinterpret_cast<uintptr_t>(&tick_hook));
@@ -332,10 +357,12 @@ bool install() {
         reinterpret_cast<LPCWSTR>(&tick_hook),&pinned)) {VirtualFree(trampoline,0,MEM_RELEASE);return false;}
     s.original=reinterpret_cast<Tick>(trampoline);
     bool success=false;
-    {PausedThreads paused;if(paused.outside(s.base+tick_rva,19)) success=write_code(s.base+tick_rva,patch.data(),patch.size());}
+    {PausedThreads paused;if(paused.outside(selected_tick,19)) success=write_code(selected_tick,patch.data(),patch.size());}
     if(!success) {s.original=nullptr;VirtualFree(trampoline,0,MEM_RELEASE);return false;}
     s.installed=true;
-    Logger::instance().info("x-ray: Minecraft 1.26.4501.0 coordinator hook installed.");return true;
+    Logger::instance().info(s.native_12650?
+        "x-ray: Minecraft 1.26.5101.0 native coordinator hook installed; engine-thread apply, restore and loaded-chunk rebuild connected. Lighting patches remain disabled.":
+        "x-ray: Minecraft 1.26.4501.0 coordinator hook installed.");return true;
 }
 } // namespace
 bool XrayModule::available() const noexcept { return state().installed.load(); }
@@ -346,9 +373,10 @@ void XrayModule::set_boolean_setting(std::size_t index, bool value) noexcept {
     if(value) visibility_.fetch_or(bit); else visibility_.fetch_and(~bit);
     if(enabled()) state().visibility=visibility_.load();
 }
-void XrayModule::on_enable() { state().visibility=visibility_.load();state().desired=true; }
+void XrayModule::on_enable() { state().visibility=visibility_.load();state().desired=true;Logger::instance().info("x-ray: enable requested; waiting for native terrain update."); }
 void XrayModule::on_disable() {
     auto& s=state();s.desired=false;
+    Logger::instance().info("x-ray: disable requested; native terrain update will restore and rebuild.");
     // Disabled modules do not receive on_tick. Restore adaptive overrides now,
     // rather than leaving terrain modified until a later re-enable.
     if(s.adaptive_12650){std::lock_guard guard(s.mutex);if(s.applied){restore_graphics();s.applied=false;}}
@@ -359,8 +387,7 @@ XrayModule::~XrayModule() {on_disable();}
 
 namespace utility::integration::terrain_lighting {
 bool initialize() { return utility::modules::install(); }
-bool available() noexcept { return utility::modules::state().installed.load() && !utility::modules::state().adaptive_12650; }
+bool available() noexcept { return utility::modules::state().installed.load() && !utility::modules::state().adaptive_12650 && !utility::modules::state().native_12650; }
 void set_fullbright_level(int level) noexcept { utility::modules::state().fullbright_level=std::clamp(level,9,15); }
 void set_fullbright(bool enabled) noexcept { utility::modules::state().fullbright=enabled; }
 }
-
