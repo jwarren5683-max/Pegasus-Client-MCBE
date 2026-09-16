@@ -1,5 +1,13 @@
 # Changelog
 
+## ESP-first repair; suspend unsuccessful Reach — 2026-09-16
+
+- Replace the ambiguous actor-list ABI with read-only packed snapshots on an exact, verified 26.50 LocalPlayer tick. Validate local membership, generations, dimensions and bounds; reject changing/freed storage.
+- Live read-only probe confirmed 22 client actors and the camera's eight-byte field shift: basis +0x420, frustum +0x4A0, renderer +0x1C0. Native snapshots no longer depend on Reach.
+- Suspend 26.50 Reach registration and its range gates for this ESP release. Allow read-only ESP for server-supplied entities while preserving other combat/movement remote restrictions.
+- Diagnose X-ray native gates individually and retry a not-yet-ready block registry in bounded native-update slices rather than permanently keeping the terrain modules N/A. Preserve instruction checks and restoration.
+- Add packed snapshot corruption/race safety tests, real RPM capture fixture, shifted camera fixture and deferred registry recovery regression. A fresh full build and live visual testing are required; probe/test success is not a claim of visible ESP.
+
 ## Reach crash / mixed-build layout repair — 2026-09-16
 
 - Windows recorded two Minecraft exits with heap corruption (`0xC0000374`). The shipped incremental build retained a Framework object from 16:25 while ReachModule's header/implementation changed at 16:59–17:00; the runtime also misreported its selected profile. Disassembly confirms its factory allocated 136 bytes (`0x88`) versus the new implementation's 144 bytes. This confirms an allocation-layout defect consistent with heap corruption, not a server kick; post-repair live stability still requires verification.

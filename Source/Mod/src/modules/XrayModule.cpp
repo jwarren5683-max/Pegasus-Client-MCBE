@@ -80,6 +80,9 @@ struct State {
     uintptr_t registry_end{};
     uintptr_t stone_graphics{};
     unsigned refresh_passes{};
+    unsigned discovery_section{};
+    uintptr_t discovery_offset{};
+    ULONGLONG next_discovery{};
 };
 // Native callbacks and their storage live until Minecraft exits; the DLL is pinned.
 State& state() { static State* s = new State; return *s; }
@@ -214,13 +217,13 @@ bool snapshot(std::vector<Graphics>& out,uintptr_t& begin,uintptr_t& end,unsigne
     }
     return air && stone && ores>=21;
 }
-bool discover_graphics_registry() {
+bool discover_graphics_registry(ULONGLONG budget=1000) {
     auto& s=state();const auto* base=reinterpret_cast<const unsigned char*>(s.base);
     const auto* dos=reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
     const auto* nt=reinterpret_cast<const IMAGE_NT_HEADERS64*>(base+dos->e_lfanew);
     const auto* sections=IMAGE_FIRST_SECTION(nt);
-    const auto deadline=GetTickCount64()+1000;
-    for(unsigned index=0;index<nt->FileHeader.NumberOfSections;++index){const auto& section=sections[index];
+    const auto deadline=GetTickCount64()+budget;
+    for(unsigned index=s.discovery_section;index<nt->FileHeader.NumberOfSections;++index){const auto& section=sections[index];
         // The vector is mutable global storage, not executable code or RTTI.
         // Copy bounded windows once instead of calling VirtualQuery twice per
         // eight-byte word across hundreds of megabytes during registration.
@@ -230,12 +233,12 @@ bool discover_graphics_registry() {
         if(start>=s.image_size||size<16)continue;
         const auto limit=(std::min)(size,s.image_size-start);
         std::array<unsigned char,65536+16> window{};
-        for(uintptr_t chunk=0;chunk<limit;chunk+=65536){
-            if(GetTickCount64()>=deadline){Logger::instance().info("x-ray: registry discovery budget exhausted; no graphics modified.");return false;}
+        for(uintptr_t chunk=index==s.discovery_section?s.discovery_offset:0;chunk<limit;chunk+=65536){
+            if(GetTickCount64()>=deadline){s.discovery_section=index;s.discovery_offset=chunk;return false;}
             const auto length=(std::min<uintptr_t>)(window.size(),limit-chunk);SIZE_T copied{};
             if(!ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<void*>(s.base+start+chunk),window.data(),length,&copied)||copied!=length)continue;
         for(uintptr_t offset=0;offset<65536&&offset+24<=length;offset+=8){const auto address=s.base+start+chunk+offset;
-            if((offset&4095)==0&&GetTickCount64()>=deadline){Logger::instance().info("x-ray: registry discovery budget exhausted; no graphics modified.");return false;}
+            if((offset&4095)==0&&GetTickCount64()>=deadline){s.discovery_section=index;s.discovery_offset=chunk+offset;return false;}
             uintptr_t begin{},end{},capacity{};
             std::memcpy(&begin,window.data()+offset,8);std::memcpy(&end,window.data()+offset+8,8);std::memcpy(&capacity,window.data()+offset+16,8);
             if(!begin||end<=begin||(end-begin)%8)continue;const auto count=(end-begin)/8;
@@ -250,6 +253,7 @@ bool discover_graphics_registry() {
         }
         }
     }
+    s.discovery_section=0;s.discovery_offset=0;
     return false;
 }
 void exchange_field(uintptr_t p,int value) noexcept { InterlockedExchange(reinterpret_cast<volatile LONG*>(p),value); }
@@ -278,6 +282,10 @@ void __fastcall tick_hook(void* coordinator) {
     {
         std::lock_guard guard(s.mutex);
         if(get<uintptr_t>(reinterpret_cast<uintptr_t>(coordinator))==s.coordinator_table) {
+            if(s.native_12650&&!s.graphics_vector&&GetTickCount64()>=s.next_discovery) {
+                s.next_discovery=GetTickCount64()+500;
+                if(discover_graphics_registry(25))Logger::instance().info("x-ray: deferred block registry validated after startup; native terrain controls ready.");
+            }
             const bool xray=s.desired.load();
             const bool fullbright=s.fullbright.load();
             const int level=s.fullbright_level.load();
@@ -365,12 +373,12 @@ bool install() {
         constexpr unsigned char rebuild_bytes[]{0x55,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x56,0x57,0x53,0x48,0x83,0xEC,0x78,0x48,0x8D,0x6C,0x24,0x70};
         constexpr unsigned char tick_call[]{0x48,0x8B,0x4B,0x18,0xE8,0x27,0x87,0x4A,0xFD};
         constexpr unsigned char rebuild_call[]{0x48,0x8B,0x4F,0x18,0x31,0xD2,0x45,0x31,0xC0,0xE8,0xE2,0xF2,0x40,0x01};
-        if(std::memcmp(reinterpret_cast<void*>(selected_tick),selected_bytes.data(),selected_bytes.size())||
-            std::memcmp(reinterpret_cast<void*>(s.rebuild_target),rebuild_bytes,sizeof(rebuild_bytes))||
-            get<uintptr_t>(s.coordinator_table)!=s.base+0x1CBABF0||
-            std::memcmp(reinterpret_cast<void*>(s.base+0x47F4A10),tick_call,sizeof(tick_call))||
-            std::memcmp(reinterpret_cast<void*>(s.base+0x88D3E0),rebuild_call,sizeof(rebuild_call)))return false;
-        if(!discover_graphics_registry())return false;
+        if(std::memcmp(reinterpret_cast<void*>(selected_tick),selected_bytes.data(),selected_bytes.size())){Logger::instance().info("x-ray: native tick prologue mismatch (possible existing hook).");return false;}
+        if(std::memcmp(reinterpret_cast<void*>(s.rebuild_target),rebuild_bytes,sizeof(rebuild_bytes))){Logger::instance().info("x-ray: native rebuild prologue mismatch.");return false;}
+        if(get<uintptr_t>(s.coordinator_table)!=s.base+0x1CBABF0){Logger::instance().info("x-ray: coordinator vtable mismatch.");return false;}
+        if(std::memcmp(reinterpret_cast<void*>(s.base+0x47F4A10),tick_call,sizeof(tick_call))||
+           std::memcmp(reinterpret_cast<void*>(s.base+0x88D3E0),rebuild_call,sizeof(rebuild_call))){Logger::instance().info("x-ray: renderer caller mismatch.");return false;}
+        if(!discover_graphics_registry())Logger::instance().info("x-ray: registry not ready at attach; native tick will retry bounded read-only discovery instead of permanently reporting N/A.");
         s.native_12650=true;
         s.native_lighting_verified=validate_native_lighting();
         Logger::instance().info(s.native_lighting_verified?

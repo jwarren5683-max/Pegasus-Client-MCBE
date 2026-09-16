@@ -27,6 +27,9 @@ int main(){
     flags[static_cast<unsigned>(GameplayFeature::triggerbot)]=true;
     check(on(GameplayFeature::auto_leave)&&!on(GameplayFeature::triggerbot),
         "remote sessions keep Auto Leave but block combat automation");
+    flags[static_cast<unsigned>(GameplayFeature::esp)]=true;
+    check(on(GameplayFeature::esp),"read-only ESP does not get suppressed by the remote combat policy");
+    flags[static_cast<unsigned>(GameplayFeature::esp)]=false;
     flags[static_cast<unsigned>(GameplayFeature::auto_leave)]=false;
     flags[static_cast<unsigned>(GameplayFeature::triggerbot)]=false;
     utility::integration::server_safety::reset();
@@ -144,6 +147,19 @@ int main(){
     std::memcpy(live_actor.data()+0x18,&live_id,4);std::memcpy(reused_actor.data()+0x18,&reused_id,4);
     capture_esp(fake_player.data());
     check(frame.boxes.size()==1,"native capture retains live mob and excludes named tombstone and reused-generation ghost");
+    const std::uint32_t local_id=11;std::memcpy(fake_player.data()+0x18,&local_id,4);
+    utility::integration::game_context_detail::player=fake_player.data();
+    capture_esp_12650();
+    check(frame.boxes.size()==1&&frame.player==fake_player.data(),"26.50 RPM snapshot publishes live bounds without any foreign native actor-list call");
+    fake_client.fill(0);write_ptr(fake_player.data(),image+0xE8E1BC0);
+    write_ptr(fake_client.data()+0x1C0,fake_renderer.data());
+    std::memcpy(fake_client.data()+0x420,straight,sizeof(straight));
+    std::memcpy(fake_client.data()+0x4A0,&frustum,sizeof(frustum));
+    CameraSample new_sample{};utility::integration::BedrockBuildInfo new_build{};
+    new_build.kind=utility::integration::BedrockBuildKind::release_12650;
+    check(camera_sample(fake_player.data(),new_sample,new_build)&&new_sample.view[0]==1&&new_sample.origin.x==23,
+        "26.50 camera decodes shifted +420/+4A0/+1C0 fields and unchanged native origin");
+    utility::integration::game_context_detail::player=nullptr;
     image=nullptr;
 
     original_eject=&mock_eject;int local{},other{};local_state=&local;
@@ -214,4 +230,3 @@ int main(){
     check(!chest_esp::belongs_to_chunk({-1,320,-17},-1,-2,-64,320,0x1800F0F),"height outside dimension rejected");
     std::puts("PASS: short input retention, one-shot consumption, diagonal input, native string ABI, ESP setting");
 }
-

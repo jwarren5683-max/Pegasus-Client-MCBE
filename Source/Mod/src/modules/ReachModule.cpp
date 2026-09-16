@@ -348,6 +348,10 @@ void ReachModule::set_value(float distance) noexcept {
 }
 
 void ReachModule::on_register(EventBus&) {
+    if(integration::is_release_12650(integration::current_bedrock_build())) {
+        Logger::instance().info("Reach suspended in the ESP repair release: no 26.50 reach gates or range hooks installed.");
+        return;
+    }
     if (install_hooks()) {
         Logger::instance().info(release_12650_
             ? "Reach hooks installed for Minecraft 1.26.5101.0; verified ray, Survival cap and final crosshair distance gates connected. Local interaction maximum includes both independent sliders; remote servers may reject extended interactions."

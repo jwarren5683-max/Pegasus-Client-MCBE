@@ -1,5 +1,8 @@
 # Minecraft 1.26.50 ESP and X-ray test
 
+**Historical release notes. Current repair status and testing instructions are
+in [ESP_REPAIR_20260916.md](ESP_REPAIR_20260916.md).**
+
 This is an experimental repair for `1.26.5101.0`, not a verified working client.
 
 ## ESP

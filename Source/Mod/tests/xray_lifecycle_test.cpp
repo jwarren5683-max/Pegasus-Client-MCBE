@@ -64,6 +64,9 @@ int main(){
     check(!s.applied&&get<int>(entries[1]+16)==0&&rebuilds==3,"disabled module restores and refreshes through native update");
     tick_hook(coordinator.data());check(rebuilds==4,"disable finishes second refresh pass");
     check(!utility::integration::terrain_lighting::available(),"unverified 26.50 Fullbright patches remain unavailable");
+    s.graphics_vector=0;s.graphics_vtable=0;s.next_discovery=0;s.discovery_section=0;s.discovery_offset=0;
+    tick_hook(coordinator.data());
+    check(s.graphics_vector==registry&&native_ticks>0,"native tick recovers registry that was absent at attach without suppressing original tick");
     s.native_12650=false;
     return 0;
 }

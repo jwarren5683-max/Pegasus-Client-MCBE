@@ -1,5 +1,6 @@
 #include "GameplayModules.hpp"
 #include "EspProjection.hpp"
+#include "EspSnapshot.hpp"
 #include "TriggerbotPolicy.hpp"
 #include "AutoLeavePolicy.hpp"
 #include "AirjumpPolicy.hpp"
@@ -35,6 +36,7 @@ std::atomic<unsigned> pending_keys{};
 std::atomic<unsigned> trigger_targets{triggerbot::all_targets};
 std::atomic_bool trigger_ready{},airjump_ready{};
 std::atomic_bool esp_ready{};
+std::atomic_bool esp_snapshot_logged{},esp_draw_logged{};
 airjump::Requests airjump_requests;
 std::atomic<float> jetpack_speed{jetpack::default_speed};
 std::atomic<unsigned> jetpack_revision{};
@@ -75,7 +77,7 @@ template<class T> T read(const void* object, std::size_t offset = 0) {
 void release_trigger_mouse();
 
 bool on(GameplayFeature feature) {
-    if(integration::server_safety::remote_session() && feature!=GameplayFeature::auto_leave) return false;
+    if(integration::server_safety::remote_session() && feature!=GameplayFeature::auto_leave&&feature!=GameplayFeature::esp) return false;
     if(integration::navigation_owns_controls.load() &&
        (feature==GameplayFeature::autotool||feature==GameplayFeature::phase||feature==GameplayFeature::airjump||
         feature==GameplayFeature::autosprint||feature==GameplayFeature::triggerbot||feature==GameplayFeature::jetpack))return false;
@@ -222,21 +224,23 @@ double esp_time() {
 // read between ticks; ReadProcessMemory fails safely if a world is being freed.
 bool camera_read(const void* object,std::size_t offset,void* output,std::size_t size) {
     SIZE_T copied{};
-    return object && ReadProcessMemory(GetCurrentProcess(),static_cast<const Byte*>(object)+offset,
+    const auto address=reinterpret_cast<std::uintptr_t>(object);
+    if(!address||address+offset<address||address+offset+size<address+offset)return false;
+    return ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<void*>(address+offset),
         output,size,&copied) && copied==size;
 }
 struct CameraSample { float view[16]{}; Vec3 origin{}; Frustum frustum{}; void* dimension{}; };
-bool camera_sample(void* player,CameraSample& sample) {
+bool camera_sample(void* player,CameraSample& sample,const integration::BedrockBuildInfo& build=integration::current_bedrock_build()) {
     void* table{};void* client{};void* renderer{};void* renderer_player{};
-    const auto build=integration::current_bedrock_build();
+    const std::size_t shift=integration::is_release_12650(build)?8:0;
     return camera_read(player,0,&table,sizeof(table)) &&
         (table==image+0xE820EC0 ||
-         (esp_ready.load()&&integration::is_release_12650(build)&&player==integration::current_player()&&table!=nullptr)) &&
+         (integration::is_release_12650(build)&&player==integration::current_player()&&table==image+0xE8E1BC0)) &&
         camera_read(player,0x1C8,&sample.dimension,sizeof(sample.dimension)) && sample.dimension &&
         camera_read(player,0xD70,&client,sizeof(client)) &&
-        camera_read(client,0x418,sample.view,sizeof(sample.view)) &&
-        camera_read(client,0x498,&sample.frustum,sizeof(sample.frustum)) &&
-        camera_read(client,0x1B8,&renderer,sizeof(renderer)) &&
+        camera_read(client,0x418+shift,sample.view,sizeof(sample.view)) &&
+        camera_read(client,0x498+shift,&sample.frustum,sizeof(sample.frustum)) &&
+        camera_read(client,0x1B8+shift,&renderer,sizeof(renderer)) &&
         camera_read(renderer,0x468,&renderer_player,sizeof(renderer_player)) &&
         camera_read(renderer_player,0x660,&sample.origin,sizeof(sample.origin));
 }
@@ -532,24 +536,52 @@ void capture_esp_12650() {
     static double previous{};const auto now=esp_time();if(now-previous<0.05)return;previous=now;
     Frame next;next.player=integration::current_player();
     struct Publish { Frame& value; ~Publish(){value.time=esp_time();std::lock_guard lock(frame_mutex);frame=std::move(value);} } publish{next};
-    if(!next.player||!runtime_actor_list)return;
-    next.dimension=read<void*>(next.player,0x1C8);auto* level=read<void*>(next.player,0x1D8);
-    if(!next.dimension||!level)return;
-    std::vector<void*> actors;
-    try { actors=runtime_actor_list(level); } catch(...) { return; }
-    if(actors.size()>16384)return;next.boxes.reserve(actors.size());
-    for(auto* raw:actors){auto* actor=static_cast<Byte*>(raw);
-        if(!actor||actor==next.player||!integration::readable_game_memory(actor,0x260))continue;
-        auto* shape=read<void*>(actor,0x220);Box box{read<Vec3>(shape),read<Vec3>(shape,12)};
-        const auto name=foreign_string(actor+0x240);
-        if(!shape||!esp_entity(actor,next.player,read<void*>(actor,0x1C8),next.dimension,name,box))continue;
+    const auto copy=[](std::uintptr_t at,void* out,std::size_t bytes){return camera_read(reinterpret_cast<void*>(at),0,out,bytes);};
+    std::uintptr_t registry{};std::uint32_t id{};
+    if(!camera_read(next.player,0x10,&registry,sizeof(registry))||
+       !camera_read(next.player,0x18,&id,sizeof(id))||
+       !camera_read(next.player,0x1C8,&next.dimension,sizeof(next.dimension))||!next.dimension)return;
+    std::vector<esp_snapshot::Actor> actors;
+    if(!esp_snapshot::actors(registry,reinterpret_cast<std::uintptr_t>(next.player),id,actors,copy))return;
+    next.boxes.reserve(actors.size());
+    for(const auto& entry:actors){auto* actor=reinterpret_cast<Byte*>(entry.pointer);
+        if(actor==next.player)continue;
+        void* shape{};void* dimension{};Box box{};
+        struct ForeignString { char buffer[16];std::size_t size,capacity; } text{};
+        if(!camera_read(actor,0x220,&shape,sizeof(shape))||!shape||
+           !camera_read(shape,0,&box.lower,sizeof(Vec3))||!camera_read(shape,12,&box.upper,sizeof(Vec3))||
+           !camera_read(actor,0x1C8,&dimension,sizeof(dimension))||
+           !camera_read(actor,0x240,&text,sizeof(text))||!text.size||text.size>256||text.capacity<text.size||text.capacity>65536)continue;
+        std::string name(text.size,'\0');
+        if(text.capacity<16)std::memcpy(name.data(),text.buffer,text.size);
+        else {void* data{};std::memcpy(&data,text.buffer,sizeof(data));if(!camera_read(data,0,name.data(),text.size))continue;}
+        std::uintptr_t owner{};std::uint32_t actual{};void* dimension2{};
+        if(!camera_read(actor,0x10,&owner,sizeof(owner))||!camera_read(actor,0x18,&actual,sizeof(actual))||
+           !camera_read(actor,0x1C8,&dimension2,sizeof(dimension2))||owner!=registry||actual!=entry.entity||dimension2!=dimension||
+           !esp_entity(actor,next.player,dimension,next.dimension,name,box))continue;
         box.player=name=="minecraft:player"||name.starts_with("minecraft:player.");
         box.color=box.player?RGB(255,50,50):name.starts_with("minecraft:")?RGB(55,135,255):RGB(60,235,90);
-        auto* state=read<void*>(actor,0x218);if(integration::readable_game_memory(state,24)){
-            const auto movement=minus(read<Vec3>(state),read<Vec3>(state,12));
+        void* state{};Vec3 positions[2]{};
+        if(camera_read(actor,0x218,&state,sizeof(state))&&camera_read(state,0,positions,sizeof(positions))){
+            const auto movement=minus(positions[0],positions[1]);
             if(valid(movement)&&dot(movement,movement)<16.0F)box.movement=movement;
         }
         next.boxes.push_back(box);
+    }
+    if(!next.boxes.empty()&&!esp_snapshot_logged.exchange(true)) {
+        char message[128]{};std::snprintf(message,sizeof(message),"ESP: native tick published %zu validated entity bounds.",next.boxes.size());
+        Logger::instance().info(message);
+    }
+}
+
+void __fastcall esp_tick_12650(void* player) {
+    original_tick(player);
+    void* table{};if(!camera_read(player,0,&table,sizeof(table))||table!=image+0xE8E1BC0)return;
+    integration::game_context_detail::player.store(player,std::memory_order_release);
+    if(on(GameplayFeature::esp)) {
+        try {capture_esp_12650();} catch(...) {
+            std::lock_guard lock(frame_mutex);frame=Frame{};
+        }
     }
 }
 
@@ -861,14 +893,14 @@ void initialize() {
     if(!image||dos->e_magic!=IMAGE_DOS_SIGNATURE)return;
     const auto* nt=reinterpret_cast<const IMAGE_NT_HEADERS64*>(image+dos->e_lfanew);
     if(nt->FileHeader.TimeDateStamp==0x6AA482FD&&nt->OptionalHeader.SizeOfImage==0x12C01000){
-        runtime_actor_list=find_runtime_actor_list();
-        // A unique historical prologue is only a candidate, not proof of the
-        // return ABI, Level layout, or safe calling thread on this build.
-        // Never call that candidate from the overlay before verifying those.
         esp_ready=false;
-        Logger::instance().info(runtime_actor_list?
-            "ESP unavailable: 26.50 actor-list candidate found; ABI, layout and calling thread require verification.":
-            "ESP unavailable: Minecraft 1.26.5101.0 runtime actor-list signature was not unique.");return;
+        constexpr Byte prologue[]{0x55,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x56,0x57,0x53,0x48,0x81,0xEC,0xD8,0x02,0,0};
+        original_tick=native<Tick>(0x475EE60);
+        if(std::memcmp(image+0x475EE60,prologue,sizeof(prologue))||
+           !swap_slot(0xE8E1BC0+0xC0,reinterpret_cast<void*>(original_tick),reinterpret_cast<void*>(&esp_tick_12650))) {
+            Logger::instance().info("ESP unavailable: exact 26.50 local tick slot/prologue mismatch.");return;
+        }
+        Logger::instance().info("ESP: 26.50 read-only packed snapshots connected to validated native local tick; waiting for local registry and camera validation. No native actor-list calls.");return;
     }
     if(nt->FileHeader.TimeDateStamp!=0x6A8378BA||nt->OptionalHeader.SizeOfImage!=0x12888000)return;
     struct Slot { std::uintptr_t rva,target; void* hook; };
@@ -913,12 +945,29 @@ ModuleCategory GameplayModule::category() const noexcept {
     default:return ModuleCategory::movement;}
 }
 bool GameplayModule::available() const noexcept {
-    if(feature_==GameplayFeature::esp)return esp_ready.load();
+    if(feature_==GameplayFeature::esp) {
+        if(integration::is_release_12650(integration::current_bedrock_build())) {
+            static std::mutex validation_mutex;std::lock_guard lock(validation_mutex);
+            static double previous{};const double now=esp_time();
+            if(now-previous>=0.5) {
+                previous=now;Frame sample;sample.player=integration::current_player();
+                std::uintptr_t registry{};std::uint32_t id{};std::vector<esp_snapshot::Actor> actors;
+                const auto copy=[](std::uintptr_t at,void* out,std::size_t size){return camera_read(reinterpret_cast<void*>(at),0,out,size);};
+                const bool valid=camera_read(sample.player,0x10,&registry,sizeof(registry))&&
+                    camera_read(sample.player,0x18,&id,sizeof(id))&&
+                    camera_read(sample.player,0x1C8,&sample.dimension,sizeof(sample.dimension))&&
+                    esp_snapshot::actors(registry,reinterpret_cast<std::uintptr_t>(sample.player),id,actors,copy)&&refresh_camera(sample);
+                if(valid&&!esp_ready.load())Logger::instance().info("ESP: local packed actor membership and camera projection validated; overlay ready.");
+                esp_ready=valid;
+            }
+        }
+        return esp_ready.load();
+    }
     return ready.load() && (feature_!=GameplayFeature::jetpack || jetpack_ready.load()) &&
         (feature_!=GameplayFeature::airjump || airjump_ready.load()) && (feature_!=GameplayFeature::triggerbot ||
         (trigger_ready.load() && integration::game_context_detail::picker_ready.load()));
 }
-bool GameplayModule::allowed_on_remote_server() const noexcept { return feature_==GameplayFeature::auto_leave; }
+bool GameplayModule::allowed_on_remote_server() const noexcept { return feature_==GameplayFeature::auto_leave||feature_==GameplayFeature::esp; }
 void GameplayModule::on_register(EventBus&) { initialize(); }
 void GameplayModule::on_enable() { if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;Logger::instance().info("Trigger Bot enabled for local-world input delivery.");} if(feature_==GameplayFeature::auto_leave){++auto_leave_revision;Logger::instance().info("Auto Leave enabled.");} flags[static_cast<unsigned>(feature_)]=true; }
 void GameplayModule::on_disable() { flags[static_cast<unsigned>(feature_)]=false; if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;release_trigger_mouse();Logger::instance().info("Trigger Bot disabled.");} if(feature_==GameplayFeature::auto_leave)++auto_leave_revision; }
@@ -968,7 +1017,6 @@ void GameplayModule::on_key_up(unsigned code) noexcept {
 void GameplayModule::draw_overlay(void* target,int width,int height) noexcept {
     const bool storage=feature_==GameplayFeature::chest_esp;
     if((feature_!=GameplayFeature::esp&&!storage)||!enabled()||!available())return;
-    if(feature_==GameplayFeature::esp&&integration::is_release_12650(integration::current_bedrock_build()))capture_esp_12650();
     Frame copy;{std::lock_guard lock(frame_mutex);copy=storage?storage_frame:frame;}
     auto& camera_cache=storage?last_storage_camera:last_camera;
     const double age=esp_time()-copy.time;
@@ -992,9 +1040,9 @@ void GameplayModule::draw_overlay(void* target,int width,int height) noexcept {
             if(a.z<near_plane||b.z<near_plane){const float t=(near_plane-a.z)/(b.z-a.z);const Vec3 cut{a.x+t*(b.x-a.x),a.y+t*(b.y-a.y),near_plane};if(a.z<near_plane)a=cut;else b=cut;}
             const auto screen=[&](Vec3 v){return POINT{static_cast<LONG>(std::clamp(width*0.5F*(1+v.x*copy.scale_x/v.z),-100000.0F,100000.0F)),static_cast<LONG>(std::clamp(height*0.5F*(1-v.y*copy.scale_y/v.z),-100000.0F,100000.0F))};};
             auto p=screen(a),q=screen(b);MoveToEx(dc,p.x,p.y,nullptr);LineTo(dc,q.x,q.y);
+            if(!storage&&!esp_draw_logged.exchange(true))Logger::instance().info("ESP: projected entity edges submitted to the live overlay.");
         }
         SelectObject(dc,old);DeleteObject(pen);
     }
 }
 }
-
