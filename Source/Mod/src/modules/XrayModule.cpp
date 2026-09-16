@@ -38,6 +38,20 @@ constexpr std::array<LightPatch,6> texture_patches{{
     {0x5AD9D9D,4,{0x66,0x0F,0xFE,0xC8},{0x66,0x0F,0x76,0xC9}},
     {0x69F67C0,7,{0x41,0x81,0xC2,0,0,0,0xFF},{0x41,0xBA,0xFF,0xFF,0xFF,0xFF,0x90}}
 }};
+// Same renderer-only operations in the exact 1.26.5101.0 image. Locations
+// were checked against unwind boundaries and final packed RGBA stores.
+constexpr auto light_patches_12650=[] {
+    auto p=light_patches;
+    p[0].rva=0x6024734;p[1].rva=0x6024A2B;
+    p[2].rva=0x60286CA;p[3].rva=0x60287A2;
+    return p;
+}();
+constexpr auto texture_patches_12650=[] {
+    auto p=texture_patches;
+    p[0].rva=0x6619E89;p[1].rva=0x6618790;p[2].rva=0x66187E0;
+    p[3].rva=0x6619B63;p[4].rva=0x6619BAD;p[5].rva=0x692D2F0;
+    return p;
+}();
 struct Graphics { uintptr_t object; uintptr_t block; uintptr_t type; int shape; float ao; bool retained; };
 using Tick = void(__fastcall*)(void*);
 struct State {
@@ -55,6 +69,7 @@ struct State {
     uintptr_t graphics_vtable{};
     bool adaptive_12650{};
     bool native_12650{};
+    bool native_lighting_verified{};
     uintptr_t coordinator_table{};
     uintptr_t rebuild_target{};
     bool snapshot_failure_logged{};
@@ -129,20 +144,41 @@ bool write_code(uintptr_t p,const void* bytes,size_t n) noexcept {
     DWORD ignored{};VirtualProtect(reinterpret_cast<void*>(p),n,previous,&ignored);return true;
 }
 void jump(unsigned char* p,uintptr_t target) { p[0]=0xFF;p[1]=0x25;std::memset(p+2,0,4);std::memcpy(p+6,&target,8); }
+bool validate_native_lighting() {
+    const auto base=state().base;
+    for(const auto& p:light_patches_12650)
+        if(!readable(base+p.rva,p.size)||std::memcmp(reinterpret_cast<void*>(base+p.rva),p.before.data(),p.size))return false;
+    for(const auto& p:texture_patches_12650)
+        if(!readable(base+p.rva,p.size)||std::memcmp(reinterpret_cast<void*>(base+p.rva),p.before.data(),p.size))return false;
+    // Validate all five containing functions, not only short patch patterns.
+    struct Entry {uintptr_t rva;size_t size;const char* bytes;};
+    const Entry entries[]{
+        {0x6024600,19,"\x41\x57\x41\x56\x41\x55\x41\x54\x56\x57\x55\x53\x48\x81\xEC\xA8\x00\x00\x00"},
+        {0x6028600,19,"\x41\x57\x41\x56\x41\x55\x41\x54\x56\x57\x55\x53\x48\x81\xEC\x18\x01\x00\x00"},
+        {0x66184D0,19,"\x41\x57\x41\x56\x41\x55\x41\x54\x56\x57\x55\x53\x48\x81\xEC\xF8\x01\x00\x00"},
+        {0x6619C50,15,"\x41\x57\x41\x56\x56\x57\x55\x53\x48\x81\xEC\xD8\x00\x00\x00"},
+        {0x692D0D0,17,"\x41\x57\x41\x56\x41\x54\x56\x57\x55\x53\x48\x81\xEC\xD0\x00\x00\x00"}
+    };
+    for(const auto& e:entries)
+        if(!readable(base+e.rva,e.size)||std::memcmp(reinterpret_cast<void*>(base+e.rva),e.bytes,e.size))return false;
+    return true;
+}
 std::vector<LightPatch> lighting_patches(bool fullbright,int level) {
-    std::vector<LightPatch> patches(light_patches.begin(),light_patches.end());
+    const auto& mesh=state().native_12650?light_patches_12650:light_patches;
+    const auto& texture=state().native_12650?texture_patches_12650:texture_patches;
+    std::vector<LightPatch> patches(mesh.begin(),mesh.end());
     // At lower levels retain the native light lookup; the white lookup used
     // by maximum Fullbright would otherwise erase the slider's effect.
     const auto mesh_level=static_cast<unsigned char>(fullbright?std::clamp(level,9,15):15);
     patches[2].after[1]=mesh_level;
     patches[3].after[2]=mesh_level;
     if(fullbright&&mesh_level==15)
-        patches.insert(patches.end(),texture_patches.begin(),texture_patches.end());
+        patches.insert(patches.end(),texture.begin(),texture.end());
     return patches;
 }
 bool lights(bool on, bool fullbright=false,int level=15) {
     auto& s=state();
-    if(s.adaptive_12650 || s.native_12650) return true;
+    if(s.adaptive_12650 || (s.native_12650&&!s.native_lighting_verified)) return true;
     const auto patches=lighting_patches(on?fullbright:s.applied_fullbright,on?level:s.applied_level);
     for(const auto& p:patches) {
         const auto& expected=on?p.before:p.after;
@@ -336,6 +372,10 @@ bool install() {
             std::memcmp(reinterpret_cast<void*>(s.base+0x88D3E0),rebuild_call,sizeof(rebuild_call)))return false;
         if(!discover_graphics_registry())return false;
         s.native_12650=true;
+        s.native_lighting_verified=validate_native_lighting();
+        Logger::instance().info(s.native_lighting_verified?
+            "Fullbright: exact 26.50 mesh and scalar/vector/End light-lookup sites verified; reversible light levels 9-15 available.":
+            "Fullbright unavailable: 26.50 lighting profile mismatch; working X-ray remains available without lighting patches.");
     } else {
     if(nt->FileHeader.TimeDateStamp!=0x6A8378BA || s.image_size!=0x12888000) return false;
     s.graphics_vector=s.base+graphics_vector_rva;s.graphics_vtable=s.base+graphics_vtable_rva;
@@ -361,7 +401,7 @@ bool install() {
     if(!success) {s.original=nullptr;VirtualFree(trampoline,0,MEM_RELEASE);return false;}
     s.installed=true;
     Logger::instance().info(s.native_12650?
-        "x-ray: Minecraft 1.26.5101.0 native coordinator hook installed; engine-thread apply, restore and loaded-chunk rebuild connected. Lighting patches remain disabled.":
+        "x-ray: Minecraft 1.26.5101.0 native coordinator hook installed; engine-thread apply, restore and loaded-chunk rebuild connected.":
         "x-ray: Minecraft 1.26.4501.0 coordinator hook installed.");return true;
 }
 } // namespace
@@ -387,7 +427,7 @@ XrayModule::~XrayModule() {on_disable();}
 
 namespace utility::integration::terrain_lighting {
 bool initialize() { return utility::modules::install(); }
-bool available() noexcept { return utility::modules::state().installed.load() && !utility::modules::state().adaptive_12650 && !utility::modules::state().native_12650; }
+bool available() noexcept { const auto& s=utility::modules::state();return s.installed.load()&&!s.adaptive_12650&&(!s.native_12650||s.native_lighting_verified); }
 void set_fullbright_level(int level) noexcept { utility::modules::state().fullbright_level=std::clamp(level,9,15); }
 void set_fullbright(bool enabled) noexcept { utility::modules::state().fullbright=enabled; }
 }

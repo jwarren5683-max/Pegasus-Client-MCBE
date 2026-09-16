@@ -1,5 +1,13 @@
 # Changelog
 
+## 26.50 Fullbright renderer repair — 2026-09-16
+
+- User confirmed the native X-ray build works in-world; runtime logs also show application, chunk refresh and disable restoration.
+- Ported the four renderer-only mesh lighting sites and six final scalar/vector/End light-lookup sites to the exact 1.26.5101.0 image. All ten original instructions and all five containing-function prologues must match; a mismatch leaves Fullbright unavailable without blocking working X-ray.
+- Fullbright light levels 9–14 keep the native lookup and adjust mesh light; level 15 produces a neutral white light lookup so ore texture colors are visible without darkness tint. Disabling restores original instructions and terrain through the native callback. World light propagation and blocks are unchanged.
+- Added both-version slider/apply/restore tests, mismatch/no-partial-write checks and native availability gating. Fullbright's new in-world visual effect still requires a fresh-session test.
+- Removed five obsolete desktop client folders from the active folder by moving them to a recoverable backup outside it. Retain the confirmed working X-ray release separately before replacing its packaged files.
+
 ## Native 26.50 X-ray renderer repair — 2026-09-16
 
 - Connected the exact mapped 26.50 coordinator update (`0x1C9D140`), rebuild-all (`0x1C9C6D0`) and constructor-established vtable (`0xE7D5B80`). Require matching fingerprint, prologue bytes, vtable destructor and both native call sites before installing.

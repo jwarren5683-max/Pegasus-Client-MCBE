@@ -27,12 +27,23 @@ The fingerprint, stack-only patch boundary, rebuild prologue, destructor and
 both engine call sites must match before hooking. The hook applies/restores
 graphics and requests two loaded-chunk refresh passes on the native engine
 thread, independent of menu ticks. Stable enabled state does not refresh every
-frame. Old lighting code patches and Fullbright remain unavailable on 26.50.
+frame. Fullbright uses the separately verified 26.50 renderer lighting profile;
+if any lighting check fails, it stays unavailable while X-ray remains usable.
 
-The earlier live log confirmed registry discovery, but not terrain application.
+The user has now confirmed that this native X-ray build works in-world. Its
+runtime log also confirms graphics application, rebuild requests and disable
+restoration. Fullbright has subsequently been ported to the exact 26.50 mesh
+and final light-lookup sites, with all ten instruction checks and five function
+prologue checks. Fullbright's new visual effect is not yet live-verified.
+Levels 9–14 retain native light colors; level 15 uses neutral maximum lighting
+so ore textures are distinguishable. The tradeoff is flatter lighting and less
+shadow contrast while enabled; disabling restores normal rendering.
+
+The earlier adaptive build confirmed registry discovery, but not terrain application.
 The new native callback path is tested with a synthetic coordinator/registry;
-in-world visual behavior is NOT yet verified. Passing tests is not proof of a
-working in-game effect. Minecraft must restart because the previous DLL is
+X-ray is user-verified in-world, but the new Fullbright effect is NOT yet
+verified. Passing tests is not proof of a working in-game effect. Minecraft
+must restart because the previous DLL is
 pinned in the currently running process; do not inject a second copy.
 
 ## Test procedure
