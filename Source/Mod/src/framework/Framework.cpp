@@ -4,6 +4,7 @@
 #include "../integration/BedrockBuild.hpp"
 #include "../integration/ChatCommands.hpp"
 #include "../integration/CompatibilityProbe.hpp"
+#include "../integration/XrayDiagnostics.hpp"
 #include "../modules/AntiKnockbackModule.hpp"
 #include "../modules/CriticalsModule.hpp"
 #include "../modules/XrayModule.hpp"
@@ -79,6 +80,10 @@ bool Framework::initialize(HMODULE module) noexcept {
     }
 
     modules_.initialize(events_);
+    // The normal X-ray adapter remains fail-closed. This one-shot background
+    // diagnostic records why its 26.50 BlockGraphics discovery was rejected
+    // without changing any native memory or delaying the menu.
+    if (integration::is_release_12650(build)) integration::run_xray_12650_diagnostics_async();
     modules_.commands().set_eject_handler([this]{return request_eject();});
     Logger::instance().info(integration::install_chat_commands(modules_)
         ? "Local comma commands installed: ,help, ,keybind, ,unbind and ,eject."
