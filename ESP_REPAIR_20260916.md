@@ -34,11 +34,15 @@ Earlier experimental release notes are historical, not current readiness claims.
 
 ## Verification and use
 
+The user confirmed this ESP repair works visibly in the local test world on
+2026-09-16. This confirms the in-game result, not only synthetic/probe success.
+Private-server behavior and long-session stability are not yet separately verified.
+
 Synthetic tests and a live read-only probe are not proof of visible ESP boxes.
 Fresh full Release build: all 21 tests passed, including packed snapshot safety,
 RPM capture, shifted camera fixture and deferred block registry recovery.
 Live log stages are: local registry/camera validated, entity bounds published,
-projected edges submitted. Confirm the visible result separately in Minecraft.
+projected edges submitted. The local-world visible result is now user-confirmed.
 X-ray and Fullbright were user-confirmed working before the reach regression;
 the startup-retry change needs a fresh-session visual regression check.
 

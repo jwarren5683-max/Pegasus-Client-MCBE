@@ -2,6 +2,8 @@
 
 ## ESP-first repair; suspend unsuccessful Reach — 2026-09-16
 
+- User confirmed the repaired ESP works visibly in the local test world. Private-server behavior and long-session stability remain unverified; no additional binary changes were made for this confirmation.
+
 - Replace the ambiguous actor-list ABI with read-only packed snapshots on an exact, verified 26.50 LocalPlayer tick. Validate local membership, generations, dimensions and bounds; reject changing/freed storage.
 - Live read-only probe confirmed 22 client actors and the camera's eight-byte field shift: basis +0x420, frustum +0x4A0, renderer +0x1C0. Native snapshots no longer depend on Reach.
 - Suspend 26.50 Reach registration and its range gates for this ESP release. Allow read-only ESP for server-supplied entities while preserving other combat/movement remote restrictions.
