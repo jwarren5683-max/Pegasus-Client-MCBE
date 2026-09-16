@@ -60,10 +60,15 @@ bool Framework::initialize(HMODULE module) noexcept {
     }
 
     config_.load_defaults();
-    auto entity_reach = std::make_unique<modules::ReachModule>();
-    auto* reach = entity_reach.get();
-    modules_.add(std::move(entity_reach));
-    modules_.add(std::make_unique<modules::BlockReachModule>(*reach));
+    if(modules::reach_implementation_size()==sizeof(modules::ReachModule)) {
+        Logger::instance().info("Reach build layout validated across factory and implementation.");
+        auto entity_reach = std::make_unique<modules::ReachModule>();
+        auto* reach = entity_reach.get();
+        modules_.add(std::move(entity_reach));
+        modules_.add(std::make_unique<modules::BlockReachModule>(*reach));
+    } else {
+        Logger::instance().info("Reach refused: mixed build object layouts. Rebuild all sources before loading.");
+    }
     modules_.add(std::make_unique<modules::GhostHandModule>());
     modules_.add(std::make_unique<modules::AntiKnockbackModule>());
     modules_.add(std::make_unique<modules::CriticalsModule>());

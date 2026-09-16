@@ -10,8 +10,12 @@
 
 namespace utility::modules {
 
+// Compared by callers compiled in other source files before allocation.
+[[nodiscard]] std::size_t reach_implementation_size() noexcept;
+
 class ReachModule final : public Module {
 public:
+    ReachModule();
     ~ReachModule() override;
     void set_block_enabled(bool enabled) noexcept { block_active_.store(enabled);ray_reported_=false;final_reported_=false; }
     float block_value() const noexcept { return block_distance_.load(); }

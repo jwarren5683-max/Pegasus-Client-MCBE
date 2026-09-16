@@ -1,5 +1,12 @@
 # Changelog
 
+## Reach crash / mixed-build layout repair — 2026-09-16
+
+- Windows recorded two Minecraft exits with heap corruption (`0xC0000374`). The shipped incremental build retained a Framework object from 16:25 while ReachModule's header/implementation changed at 16:59–17:00; the runtime also misreported its selected profile. Disassembly confirms its factory allocated 136 bytes (`0x88`) versus the new implementation's 144 bytes. This confirms an allocation-layout defect consistent with heap corruption, not a server kick; post-repair live stability still requires verification.
+- Rebuild all native files in a new empty build directory. Add a factory-versus-implementation size check before Reach allocation and move its constructor out of line.
+- Add a separately compiled allocation-canary regression test exercising construction, entity/block sliders, enable/disable and destruction. Existing same-file reach tests alone could not catch this release defect.
+- Preserve working X-ray/Fullbright code. ESP remains gated pending verified entity-list ABI/layout/thread support; the crash repair was selected as the faster task. Fresh-session stability and private-server behavior still require live validation.
+
 ## 26.50 Reach native distance gates — 2026-09-16
 
 - User confirmed Fullbright works. Working X-ray/Fullbright implementation is unchanged by this reach repair.

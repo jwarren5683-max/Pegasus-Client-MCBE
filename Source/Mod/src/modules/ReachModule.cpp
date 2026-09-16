@@ -312,6 +312,9 @@ bool exchange_slot(void** slot, void* value) noexcept {
 
 } // namespace
 
+std::size_t reach_implementation_size() noexcept { return sizeof(ReachModule); }
+ReachModule::ReachModule() = default;
+
 ReachModule::~ReachModule() {
     active_.store(false, std::memory_order_release);
     uninstall_hooks();
