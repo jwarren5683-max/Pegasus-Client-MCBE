@@ -9,6 +9,9 @@
 - Added 23-test coverage for the fail-closed cadence policy. The candidate is
   packaged separately so existing AutoLeave, reach, and visual clients remain
   untouched.
+- Added runtime XInput support for LB/RB/RT modifier, left-stick-forward and
+  A-jump controls, and removed the stale unverified inventory-pointer gate that
+  could make the 26.50 candidate inert.
 
 ## ChestESP current-version port — 2026-09-16
 

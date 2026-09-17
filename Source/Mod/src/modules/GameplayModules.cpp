@@ -205,6 +205,42 @@ bool controls_active() {
     return process == GetCurrentProcessId() && GetCursorInfo(&cursor) && !(cursor.flags & CURSOR_SHOWING);
 }
 bool key(int code) { return (GetAsyncKeyState(code) & 0x8000) != 0; }
+
+// Keep controller support optional and runtime-resolved. Bedrock ships with
+// different XInput DLL names across Windows builds, so no import-library or
+// registry change is needed. A controller only supplies the same boolean gates
+// as the keyboard path; movement and camera remain entirely user-controlled.
+struct ControllerGamepad { unsigned short buttons{}; unsigned char left_trigger{},right_trigger{}; short lx{},ly{},rx{},ry{}; };
+struct ControllerState { unsigned long packet{}; ControllerGamepad gamepad{}; };
+using XInputGetStateFn=unsigned long(__stdcall*)(unsigned,ControllerState*);
+XInputGetStateFn xinput_get_state() noexcept {
+    static std::once_flag once;static XInputGetStateFn function{};
+    std::call_once(once,[] {
+        constexpr wchar_t names[][24]{L"xinput1_4.dll",L"xinput1_3.dll",L"xinput9_1_0.dll"};
+        for(const auto& name:names) {
+            if(auto library=LoadLibraryW(name)) {
+                function=reinterpret_cast<XInputGetStateFn>(GetProcAddress(library,"XInputGetState"));
+                if(function)return;
+            }
+        }
+    });
+    return function;
+}
+struct ControllerControls { bool connected{},modifier{},forward{},jump{}; };
+ControllerControls controller_controls() noexcept {
+    ControllerControls result{};const auto get=xinput_get_state();if(!get)return result;
+    constexpr unsigned short a=0x1000,left_shoulder=0x0100,right_shoulder=0x0200;
+    constexpr short forward_threshold=12000;
+    for(unsigned index=0;index<4;++index) {
+        ControllerState state{};
+        if(get(index,&state)!=0)continue;
+        result.connected=true;
+        result.modifier=result.modifier||(state.gamepad.buttons&(left_shoulder|right_shoulder))!=0||state.gamepad.right_trigger>=180;
+        result.forward=result.forward||state.gamepad.ly>=forward_threshold;
+        result.jump=result.jump||(state.gamepad.buttons&a)!=0;
+    }
+    return result;
+}
 bool local_player(void* player) { return read<void*>(player) == image + 0xE820EC0; }
 std::uint64_t unique_id(void* player) {
     std::uint64_t id{};
@@ -692,11 +728,13 @@ void auto_bridge_tick(void* player) {
     const auto pitch=read<float>(rotation,0);
     const auto supplies=read<void*>(player,0x5B8);
     const auto selected=read<int>(supplies,0x10);
-    // The current profile has no verified item-class accessor. Requiring a
-    // valid hotbar slot and an explicit modifier keeps placement user-directed;
-    // the selected slot must contain ordinary building blocks.
-    const bool selected_slot=selected>=0&&selected<9&&supplies&&
-        integration::readable_game_memory(static_cast<const Byte*>(supplies),0x18);
+    // The current profile has no verified item-class accessor. The previous
+    // pointer/slot check could reject every placement after a layout update;
+    // require only a plausible hotbar index and leave the item choice to the
+    // user. The explicit modifier, downward aim and normal game placement
+    // path remain mandatory.
+    const bool selected_slot=selected>=0&&selected<9;
+    const auto controller=controller_controls();
     // The 26.50 player-alive target is not part of the verified profile yet;
     // controls are already disabled by the game when the local player is not
     // interactive. Keep this candidate fail-closed on pointer/dimension only
@@ -708,7 +746,7 @@ void auto_bridge_tick(void* player) {
         !integration::server_safety::remote_session(),
         controls_active(),
         alive,
-        key('V'),key('W'),key(VK_SPACE),
+        key('V')||controller.modifier,key('W')||controller.forward,key(VK_SPACE)||controller.jump,
         std::isfinite(pitch)&&pitch>=20.0F&&pitch<=89.5F,
         selected_slot};
     if(cadence.update(now,input).place)emit_bridge_place();
@@ -1080,7 +1118,7 @@ bool GameplayModule::available() const noexcept {
 }
 bool GameplayModule::allowed_on_remote_server() const noexcept { return feature_==GameplayFeature::auto_leave||feature_==GameplayFeature::esp||feature_==GameplayFeature::chest_esp; }
 void GameplayModule::on_register(EventBus&) { initialize(); }
-void GameplayModule::on_enable() { if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;Logger::instance().info("Trigger Bot enabled for local-world input delivery.");} if(feature_==GameplayFeature::auto_leave){++auto_leave_revision;Logger::instance().info("Auto Leave enabled.");} if(feature_==GameplayFeature::auto_bridge)Logger::instance().info("Auto Bridge enabled: hold V+W+Space while looking down with blocks selected."); flags[static_cast<unsigned>(feature_)]=true; }
+void GameplayModule::on_enable() { if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;Logger::instance().info("Trigger Bot enabled for local-world input delivery.");} if(feature_==GameplayFeature::auto_leave){++auto_leave_revision;Logger::instance().info("Auto Leave enabled.");} if(feature_==GameplayFeature::auto_bridge)Logger::instance().info("Auto Bridge enabled: keyboard V+W+Space or controller LB/RB/RT + left-stick-forward + A; look down."); flags[static_cast<unsigned>(feature_)]=true; }
 void GameplayModule::on_disable() { flags[static_cast<unsigned>(feature_)]=false; if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;release_trigger_mouse();Logger::instance().info("Trigger Bot disabled.");} if(feature_==GameplayFeature::auto_leave)++auto_leave_revision; if(feature_==GameplayFeature::auto_bridge)Logger::instance().info("Auto Bridge disabled."); }
 bool GameplayModule::has_value() const noexcept { return feature_==GameplayFeature::jetpack||feature_==GameplayFeature::auto_leave; }
 std::string_view GameplayModule::value_label() const noexcept { return feature_==GameplayFeature::auto_leave?"Leave at":"Speed"; }
