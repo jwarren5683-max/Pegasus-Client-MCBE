@@ -40,3 +40,11 @@ combat-logout penalties or lost progress. Private-server testing remains separat
 
 The read-only health probe never invokes the leave method or changes world
 memory. Game captures and live memory/probe output stay local, not on GitHub.
+
+Fresh full Release build completed. The final GameplayModules object was built
+after the last source/header change; AutoLeave and gameplay fixtures were forced
+Rebuild. All22 tests passed. Read-only live probe verified native health key7.
+Candidate DLL SHA256:
+B2E1BBDF39DCFCFD5BDE3FA185C56C002DB451012C586F366EBB825B7C35E2B1.
+Separate desktop package: `Pegasus Clients/Pegasus AutoLeave TEST - 2026-09-16`.
+Actual automatic save/disconnect still requires user activation and confirmation.
