@@ -46,3 +46,4 @@ block breaking and entity damage beyond vanilla distance require a fresh local
 Survival world test, with one client loaded. Remote/private-server enforcement
 can still reject longer interactions. Do not install over a loaded DLL.
 Native executable captures remain local and must not be uploaded.
+

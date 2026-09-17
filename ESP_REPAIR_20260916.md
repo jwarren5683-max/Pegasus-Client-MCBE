@@ -55,3 +55,4 @@ replacement. No game force-termination, security, permissions, registry, driver,
 WindowsApps ownership or device configuration changes are part of this repair.
 
 Executable captures and world-memory probe output stay local and are not uploaded.
+

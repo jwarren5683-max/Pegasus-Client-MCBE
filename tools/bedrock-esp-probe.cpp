@@ -112,3 +112,4 @@ int main(int argc,char** argv) {
     }
     std::printf("Probe finished: %u candidates. No game memory changed.\n",matches);CloseHandle(process);return 7;
 }
+

@@ -74,3 +74,4 @@ int main() {
         "invalid native health is rejected");
     std::puts("Auto Leave half-heart threshold, confirmation and one-shot policy passed.");
 }
+

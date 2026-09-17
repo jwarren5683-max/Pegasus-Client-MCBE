@@ -59,3 +59,4 @@ int main(){
     check(!capture_loaded(player.data(),&dimension,region.data(),source.data(),profile_12650,result,get_chunk,get_block)&&result.empty(),"broken loaded chunk list fails closed");
     std::puts("PASS: chest bounds, identifiers and retired-storage reads");
 }
+

@@ -82,3 +82,4 @@ private:
     ReachModule& entity_;
 };
 } // namespace utility::modules
+

@@ -41,3 +41,4 @@ The current source includes unfinished navigation development, which remains dis
 ## Verification
 
 The clean rebuilt DLL passes all 20 tests, including a separately compiled Reach allocation-canary test, exact 1.26.50 build classification, X-ray lifecycle, Fullbright restoration, Auto Leave threshold/one-shot behavior, remote-server policy, entity reach, Trigger Bot local input dispatch, focus loss, and menu interaction. The unsafe re-entrant native attack call was removed after repeatable crash reports. These checks do not override server authority or certify native behavior on every Minecraft version; live post-repair stability still requires verification.
+

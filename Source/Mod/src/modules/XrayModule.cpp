@@ -439,3 +439,4 @@ bool available() noexcept { const auto& s=utility::modules::state();return s.ins
 void set_fullbright_level(int level) noexcept { utility::modules::state().fullbright_level=std::clamp(level,9,15); }
 void set_fullbright(bool enabled) noexcept { utility::modules::state().fullbright=enabled; }
 }
+

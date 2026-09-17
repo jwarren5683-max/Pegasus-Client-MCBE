@@ -45,3 +45,4 @@ bool actors(std::uintptr_t registry, std::uintptr_t local, std::uint32_t local_i
     output=std::move(result);return true;
 }
 }
+

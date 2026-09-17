@@ -47,3 +47,4 @@ private:
 };
 
 } // namespace utility::modules::auto_leave
+

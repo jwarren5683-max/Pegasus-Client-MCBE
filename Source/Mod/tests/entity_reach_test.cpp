@@ -120,3 +120,4 @@ int main() {
     }
     std::puts("PASS: native Survival entity cap, clamp, final rejection, slider distances, signature rejection, restoration");
 }
+

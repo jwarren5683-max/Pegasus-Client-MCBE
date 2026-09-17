@@ -619,3 +619,4 @@ void ReachModule::uninstall_hooks() noexcept {
 }
 
 } // namespace utility::modules
+

@@ -152,3 +152,4 @@ inline bool capture(void* player,unsigned char* image,std::vector<Storage>& outp
         reinterpret_cast<GetChunk>(image+selected->get_chunk),reinterpret_cast<GetBlock>(image+selected->get_block),observer);
 }
 }
+

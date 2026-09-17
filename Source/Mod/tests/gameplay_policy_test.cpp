@@ -230,3 +230,4 @@ int main(){
     check(!chest_esp::belongs_to_chunk({-1,320,-17},-1,-2,-64,320,0x1800F0F),"height outside dimension rejected");
     std::puts("PASS: short input retention, one-shot consumption, diagonal input, native string ABI, ESP setting");
 }
+

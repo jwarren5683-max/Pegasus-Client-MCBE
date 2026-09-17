@@ -43,3 +43,4 @@ int main(){
     check(!actors(ptr(registry),ptr(local),packed[0],out,fault),"freed local page fails closed without native dereference");
     std::puts("PASS: read-only ESP snapshot safety");
 }
+

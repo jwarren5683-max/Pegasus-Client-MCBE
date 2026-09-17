@@ -72,3 +72,4 @@ int main(int argc,char** argv) {
     }
     CloseHandle(process);std::puts("No structurally validated attribute candidates; no memory changed.");return 6;
 }
+

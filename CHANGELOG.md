@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-17 — Auto Bridge test candidate
+
+- Added a separate Auto Bridge gameplay module for the current Bedrock profile.
+- It uses only guarded, user-directed right-click pulses (V+W+Space while
+  looking down), with local/foreground/alive/cadence gates and no native
+  placement or inventory writes.
+- Added 23-test coverage for the fail-closed cadence policy. The candidate is
+  packaged separately so existing AutoLeave, reach, and visual clients remain
+  untouched.
+
 ## ChestESP current-version port — 2026-09-16
 
 - Connect ChestESP to the verified 26.50 local-player tick and independent readiness rather than the unavailable legacy gameplay gate. Preserve user-confirmed ESP and terrain renderer paths.
@@ -131,3 +141,4 @@
 ### Known limitation
 
 Extended reach is a client-side feature. Multiplayer servers can enforce their own reach distance and reject attacks or interactions outside that limit.
+

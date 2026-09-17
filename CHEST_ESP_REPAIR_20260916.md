@@ -46,3 +46,4 @@ The DLL remains pinned until Minecraft closes normally. Never inject this over
 an existing loaded client. The prior user-confirmed ESP package must be kept in
 a recoverable backup before replacing the desktop package. Executable captures
 and world probe output stay local; only client sources/docs/releases are uploaded.
+

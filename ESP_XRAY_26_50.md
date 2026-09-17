@@ -93,3 +93,4 @@ If a required signature or registry validation fails, the affected module stays
 `N/A` and writes the reason to
 `%LOCALAPPDATA%\BedrockUtilityFramework\framework.log` rather than guessing an
 address.
+

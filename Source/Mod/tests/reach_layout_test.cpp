@@ -25,3 +25,4 @@ int main() {
         check(memory[i]==std::byte{0xA5},"constructor and methods never write beyond factory allocation");
     std::printf("PASS: separate-file reach allocation %zu bytes; canary intact\n",sizeof(ReachModule));
 }
+

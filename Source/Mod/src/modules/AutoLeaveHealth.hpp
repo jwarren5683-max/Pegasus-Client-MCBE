@@ -34,3 +34,4 @@ bool health_12650(std::uintptr_t component, float& health, Read read) noexcept {
     health=observed;return true;
 }
 }
+

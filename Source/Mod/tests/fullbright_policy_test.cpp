@@ -59,3 +59,4 @@ int main(){
     VirtualFree(reinterpret_cast<void*>(s.base),0,MEM_RELEASE);s.base=0;
     std::puts("Fullbright slider, mesh lighting, lookup and restoration passed");
 }
+

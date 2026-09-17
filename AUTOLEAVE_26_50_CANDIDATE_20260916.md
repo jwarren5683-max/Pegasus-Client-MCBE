@@ -48,3 +48,4 @@ Candidate DLL SHA256:
 B2E1BBDF39DCFCFD5BDE3FA185C56C002DB451012C586F366EBB825B7C35E2B1.
 Separate desktop package: `Pegasus Clients/Pegasus AutoLeave TEST - 2026-09-16`.
 Actual automatic save/disconnect still requires user activation and confirmation.
+
