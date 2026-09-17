@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-09-17 — Aim Assist local test candidate
+
+- Added a separate Combat Aim Assist module for the current Bedrock profile.
+- Requires an explicit hold (keyboard C or XInput LT), foreground gameplay,
+  local-session gating and a live player/dimension snapshot.
+- Targets validated player boxes only, applies smooth bounded screen-space
+  corrections, and emits ordinary relative mouse movement; it does not attack,
+  write native game state, or alter device settings.
+- Added fail-closed policy coverage for FOV, target type, finite/depth checks,
+  hold gating and bounded smoothing. This is a local-world test candidate; the
+  current profile has no verified line-of-sight query or integrated-server
+  discriminator.
+
 ## 2026-09-17 — Auto Bridge test candidate
 
 - Added a separate Auto Bridge gameplay module for the current Bedrock profile.

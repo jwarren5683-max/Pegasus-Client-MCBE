@@ -5,6 +5,7 @@
 #include "AutoLeavePolicy.hpp"
 #include "AutoLeaveHealth.hpp"
 #include "AutoBridgePolicy.hpp"
+#include "AimAssistPolicy.hpp"
 #include "AirjumpPolicy.hpp"
 #include "JetpackPolicy.hpp"
 #include "ChestEspContainers.hpp"
@@ -49,6 +50,7 @@ std::atomic<float> auto_leave_hearts{auto_leave::default_hearts};
 std::atomic<unsigned> auto_leave_revision{};
 std::atomic_bool auto_leave_ready{};
 std::atomic_bool auto_bridge_ready{};
+std::atomic_bool aim_assist_ready{};
 auto_leave::Gate auto_leave_gate;
 unsigned key_bit(unsigned code) {
     switch(code) { case 'W': return 1; case 'S': return 2; case 'A': return 4; case 'D': return 8; case VK_SPACE: return 16; default: return 0; }
@@ -81,13 +83,14 @@ template<class T> T read(const void* object, std::size_t offset = 0) {
 }
 void release_trigger_mouse();
 void auto_bridge_tick(void* player);
+void aim_assist_tick(void* player);
 
 bool on(GameplayFeature feature) {
     if(integration::server_safety::remote_session() && feature!=GameplayFeature::auto_leave&&feature!=GameplayFeature::esp&&feature!=GameplayFeature::chest_esp) return false;
     if(integration::navigation_owns_controls.load() &&
        (feature==GameplayFeature::autotool||feature==GameplayFeature::phase||feature==GameplayFeature::airjump||
         feature==GameplayFeature::autosprint||feature==GameplayFeature::triggerbot||feature==GameplayFeature::jetpack||
-        feature==GameplayFeature::auto_bridge))return false;
+        feature==GameplayFeature::auto_bridge||feature==GameplayFeature::aim_assist))return false;
     return flags[static_cast<unsigned>(feature)].load();
 }
 
@@ -226,7 +229,7 @@ XInputGetStateFn xinput_get_state() noexcept {
     });
     return function;
 }
-struct ControllerControls { bool connected{},modifier{},forward{},jump{}; };
+struct ControllerControls { bool connected{},modifier{},forward{},jump{},aim{}; };
 ControllerControls controller_controls() noexcept {
     ControllerControls result{};const auto get=xinput_get_state();if(!get)return result;
     constexpr unsigned short a=0x1000,left_shoulder=0x0100,right_shoulder=0x0200;
@@ -236,6 +239,7 @@ ControllerControls controller_controls() noexcept {
         if(get(index,&state)!=0)continue;
         result.connected=true;
         result.modifier=result.modifier||(state.gamepad.buttons&(left_shoulder|right_shoulder))!=0||state.gamepad.right_trigger>=180;
+        result.aim=result.aim||state.gamepad.left_trigger>=180;
         result.forward=result.forward||state.gamepad.ly>=forward_threshold;
         result.jump=result.jump||(state.gamepad.buttons&a)!=0;
     }
@@ -661,11 +665,12 @@ void __fastcall esp_tick_12650(void* player) {
         else auto_leave_gate.reset();
     }
     if(auto_bridge_ready.load())auto_bridge_tick(player);
-    if(on(GameplayFeature::esp)) {
+    if(on(GameplayFeature::esp)||on(GameplayFeature::aim_assist)) {
         try {capture_esp_12650();} catch(...) {
             std::lock_guard lock(frame_mutex);frame=Frame{};
         }
     }
+    if(aim_assist_ready.load())aim_assist_tick(player);
     if(chest_ready.load()&&on(GameplayFeature::chest_esp)) {
         try {capture_storage(player);}catch(...) {std::lock_guard lock(frame_mutex);storage_frame=Frame{};}
     }
@@ -750,6 +755,50 @@ void auto_bridge_tick(void* player) {
         std::isfinite(pitch)&&pitch>=20.0F&&pitch<=89.5F,
         selected_slot};
     if(cadence.update(now,input).place)emit_bridge_place();
+}
+bool send_aim_mouse(int dx,int dy) noexcept {
+    if(dx==0&&dy==0)return true;
+    INPUT input{};input.type=INPUT_MOUSE;input.mi.dwFlags=MOUSEEVENTF_MOVE;
+    input.mi.dx=dx;input.mi.dy=dy;
+    return SendInput(1,&input,sizeof(input))==1;
+}
+void aim_assist_tick(void* player) {
+    if(!aim_assist_ready.load())return;
+    const auto controller=controller_controls();
+    const auto dimension=read<void*>(player,0x1C8);
+    const auto alive=integration::is_release_12650(integration::current_bedrock_build())
+        ? player&&dimension : player&&dimension&&native<bool(__fastcall*)(void*)>(0x26EFD60)(player);
+    const auto input=aim_assist::Input{
+        on(GameplayFeature::aim_assist),!integration::server_safety::remote_session(),
+        controls_active(),alive,key('C')||controller.aim};
+    if(!input.enabled||!input.local_world||!input.foreground||!input.alive||!input.modifier)return;
+    Frame copy;{std::lock_guard lock(frame_mutex);copy=frame;}
+    const auto age=esp_time()-copy.time;
+    if(copy.player!=player||copy.dimension!=dimension||age<0||age>0.20||copy.boxes.empty())return;
+    if(!refresh_camera(copy))return;
+    RECT client{};const auto window=GetForegroundWindow();
+    if(!window||!GetClientRect(window,&client))return;
+    const auto width=client.right-client.left,height=client.bottom-client.top;
+    if(width<320||height<200||!copy.scale_x||!copy.scale_y)return;
+    aim_assist::Target best{};float best_radius=aim_assist::default_fov_pixels;
+    for(const auto& box:copy.boxes) {
+        if(!box.player)continue;
+        const Vec3 point{(box.lower.x+box.upper.x)*0.5F,
+            box.lower.y+(box.upper.y-box.lower.y)*0.58F,
+            (box.lower.z+box.upper.z)*0.5F};
+        const auto space=camera_space(copy,point);
+        if(!valid(space)||space.z<=0.05F)continue;
+        const float x=static_cast<float>(width)*0.5F*(1.0F+space.x*copy.scale_x/space.z);
+        const float y=static_cast<float>(height)*0.5F*(1.0F-space.y*copy.scale_y/space.z);
+        const float error_x=x-static_cast<float>(width)*0.5F;
+        const float error_y=y-static_cast<float>(height)*0.5F;
+        const float radius=std::hypot(error_x,error_y);
+        if(!std::isfinite(radius)||radius>=best_radius)continue;
+        best={true,true,error_x,error_y,space.z};best_radius=radius;
+    }
+    const auto correction=aim_assist::correct(input,best);
+    if(correction.adjust&&on(GameplayFeature::aim_assist)&&aim_assist_ready.load()&&controls_active())
+        send_aim_mouse(correction.dx,correction.dy);
 }
 void release_trigger_mouse() {
     if(!trigger_button_down)return;
@@ -855,7 +904,8 @@ void tick_features(void* player,Vec3 before,bool alive_before) {
             velocity->x=0;velocity->z=0;
         }
     }
-    if(on(GameplayFeature::esp))capture_esp(player);
+    if(on(GameplayFeature::esp)||on(GameplayFeature::aim_assist))capture_esp(player);
+    aim_assist_tick(player);
     if(on(GameplayFeature::chest_esp))capture_storage(player);
 }
 void __fastcall local_tick_features(void* player) {
@@ -1033,7 +1083,9 @@ void initialize() {
             Logger::instance().info("ESP unavailable: exact 26.50 local tick slot/prologue mismatch.");return;
         }
         auto_bridge_ready=true;
+        aim_assist_ready=true;
         Logger::instance().info("Auto Bridge: 26.50 local tick connected; guarded input-assist candidate ready (V+W+Space, look down).");
+        Logger::instance().info("Aim Assist: 26.50 local tick connected; explicit-hold, bounded player-target correction candidate ready (C or controller LT).");
         Logger::instance().info("ESP: 26.50 read-only packed snapshots connected to validated native local tick; waiting for local registry and camera validation. No native actor-list calls.");
         constexpr Byte leave_prologue[]{0x55,0x56,0x57,0x48,0x81,0xEC,0x00,0x01,0x00,0x00,0x48,0x8D,0xAC,0x24,0x80,0x00,0x00,0x00};
         constexpr Byte component_stride[]{0x4B,0x8D,0x04,0x80,0xC1,0xE0,0x04,0x48,0x01,0xC1};
@@ -1073,6 +1125,7 @@ void initialize() {
         reinterpret_cast<void*>(&server_tick_hook));
     trigger_ready=verify_triggerbot();
     auto_bridge_ready=true;
+    aim_assist_ready=true;
     Logger::instance().info(trigger_ready.load()?"Trigger Bot ready for local worlds; safe input delivery active.":
         "Trigger Bot unavailable: target-picker signature mismatch.");
     esp_ready=true;ready=true;Logger::instance().info("Native gameplay modules initialized for Minecraft 1.26.4501.0.");
@@ -1080,11 +1133,11 @@ void initialize() {
 }
 
 std::string_view GameplayModule::name() const noexcept {
-    constexpr std::string_view names[]{"ESP","Autotool","Phase","Airjump","deathposition","autosprint","ChestESP","triggerbot","Jetpack","Auto Leave","Auto Bridge"};
+    constexpr std::string_view names[]{"ESP","Autotool","Phase","Airjump","deathposition","autosprint","ChestESP","triggerbot","Jetpack","Auto Leave","Auto Bridge","Aim Assist"};
     return names[static_cast<unsigned>(feature_)];
 }
 ModuleCategory GameplayModule::category() const noexcept {
-    switch(feature_){case GameplayFeature::triggerbot:case GameplayFeature::auto_leave:return ModuleCategory::combat;
+    switch(feature_){case GameplayFeature::triggerbot:case GameplayFeature::auto_leave:case GameplayFeature::aim_assist:return ModuleCategory::combat;
     case GameplayFeature::esp:case GameplayFeature::chest_esp:return ModuleCategory::visual;
     case GameplayFeature::autotool:case GameplayFeature::deathposition:return ModuleCategory::player;
     default:return ModuleCategory::movement;}
@@ -1094,6 +1147,7 @@ bool GameplayModule::available() const noexcept {
         float health{};return auto_leave_ready.load()&&current_health(integration::current_player(),health);
     }
     if(feature_==GameplayFeature::auto_bridge) return auto_bridge_ready.load();
+    if(feature_==GameplayFeature::aim_assist) return aim_assist_ready.load();
     if(feature_==GameplayFeature::esp||(feature_==GameplayFeature::chest_esp&&integration::is_release_12650(integration::current_bedrock_build()))) {
         if(integration::is_release_12650(integration::current_bedrock_build())) {
             static std::mutex validation_mutex;std::lock_guard lock(validation_mutex);
@@ -1118,8 +1172,8 @@ bool GameplayModule::available() const noexcept {
 }
 bool GameplayModule::allowed_on_remote_server() const noexcept { return feature_==GameplayFeature::auto_leave||feature_==GameplayFeature::esp||feature_==GameplayFeature::chest_esp; }
 void GameplayModule::on_register(EventBus&) { initialize(); }
-void GameplayModule::on_enable() { if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;Logger::instance().info("Trigger Bot enabled for local-world input delivery.");} if(feature_==GameplayFeature::auto_leave){++auto_leave_revision;Logger::instance().info("Auto Leave enabled.");} if(feature_==GameplayFeature::auto_bridge)Logger::instance().info("Auto Bridge enabled: keyboard V+W+Space or controller LB/RB/RT + left-stick-forward + A; look down."); flags[static_cast<unsigned>(feature_)]=true; }
-void GameplayModule::on_disable() { flags[static_cast<unsigned>(feature_)]=false; if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;release_trigger_mouse();Logger::instance().info("Trigger Bot disabled.");} if(feature_==GameplayFeature::auto_leave)++auto_leave_revision; if(feature_==GameplayFeature::auto_bridge)Logger::instance().info("Auto Bridge disabled."); }
+void GameplayModule::on_enable() { if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;Logger::instance().info("Trigger Bot enabled for local-world input delivery.");} if(feature_==GameplayFeature::auto_leave){++auto_leave_revision;Logger::instance().info("Auto Leave enabled.");} if(feature_==GameplayFeature::auto_bridge)Logger::instance().info("Auto Bridge enabled: keyboard V+W+Space or controller LB/RB/RT + left-stick-forward + A; look down."); if(feature_==GameplayFeature::aim_assist)Logger::instance().info("Aim Assist enabled: hold C or controller LT; bounded player-only mouse correction in a 180px screen FOV."); flags[static_cast<unsigned>(feature_)]=true; }
+void GameplayModule::on_disable() { flags[static_cast<unsigned>(feature_)]=false; if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;release_trigger_mouse();Logger::instance().info("Trigger Bot disabled.");} if(feature_==GameplayFeature::auto_leave)++auto_leave_revision; if(feature_==GameplayFeature::auto_bridge)Logger::instance().info("Auto Bridge disabled."); if(feature_==GameplayFeature::aim_assist)Logger::instance().info("Aim Assist disabled."); }
 bool GameplayModule::has_value() const noexcept { return feature_==GameplayFeature::jetpack||feature_==GameplayFeature::auto_leave; }
 std::string_view GameplayModule::value_label() const noexcept { return feature_==GameplayFeature::auto_leave?"Leave at":"Speed"; }
 std::string_view GameplayModule::value_suffix() const noexcept { return feature_==GameplayFeature::auto_leave?" hearts":" blocks/s"; }
