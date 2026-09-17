@@ -43,6 +43,13 @@ add_library(BedrockUtilityFramework SHARED
     src/modules/BaritoneModule.cpp
     src/integration/NativeNavigationAdapter.cpp
 )
+option(BUF_BUILD_AUTOLEAVE_HEALTH_PROBE "Build read-only AutoLeave health diagnostics" OFF)
+if(BUF_BUILD_AUTOLEAVE_HEALTH_PROBE)
+    add_executable(BedrockAutoLeaveHealthProbe ../../tools/bedrock-autoleave-health-probe.cpp)
+    target_compile_features(BedrockAutoLeaveHealthProbe PRIVATE cxx_std_20)
+    target_compile_definitions(BedrockAutoLeaveHealthProbe PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_link_libraries(BedrockAutoLeaveHealthProbe PRIVATE Psapi)
+endif()
 target_link_libraries(BedrockUtilityFramework PRIVATE BedrockNavigation)
 
 target_include_directories(BedrockUtilityFramework PRIVATE src)

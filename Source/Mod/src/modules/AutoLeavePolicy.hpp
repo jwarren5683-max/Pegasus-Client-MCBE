@@ -16,7 +16,7 @@ inline constexpr float default_hearts = 4.0F;
 
 class Gate final {
 public:
-    // Two matching samples reject a single torn/native-transition read while
+    // Two consecutive low samples reject a single torn/native-transition read while
     // adding no more than one normal player tick of delay.
     [[nodiscard]] bool update(float health_points, float threshold_hearts, bool enabled) noexcept {
         if (!enabled || !std::isfinite(health_points) || health_points < 0.0F || health_points > 20.0F) {

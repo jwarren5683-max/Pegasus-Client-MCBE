@@ -3,6 +3,7 @@
 #include "EspSnapshot.hpp"
 #include "TriggerbotPolicy.hpp"
 #include "AutoLeavePolicy.hpp"
+#include "AutoLeaveHealth.hpp"
 #include "AirjumpPolicy.hpp"
 #include "JetpackPolicy.hpp"
 #include "ChestEspContainers.hpp"
@@ -45,6 +46,7 @@ std::atomic_bool jetpack_ready{};
 std::atomic<unsigned> trigger_revision{};
 std::atomic<float> auto_leave_hearts{auto_leave::default_hearts};
 std::atomic<unsigned> auto_leave_revision{};
+std::atomic_bool auto_leave_ready{};
 auto_leave::Gate auto_leave_gate;
 unsigned key_bit(unsigned code) {
     switch(code) { case 'W': return 1; case 'S': return 2; case 'A': return 4; case 'D': return 8; case VK_SPACE: return 16; default: return 0; }
@@ -90,6 +92,20 @@ bool current_health(void* player,float& health) {
         if(!integration::readable_game_memory(reinterpret_cast<void*>(at),size))return false;
         std::memcpy(output,reinterpret_cast<void*>(at),size);return true;
     };
+    if(integration::is_release_12650(integration::current_bedrock_build())) {
+        const auto safe_copy=[](std::uintptr_t at,void* output,std::size_t size) {
+            SIZE_T got{};return ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<void*>(at),output,size,&got)&&got==size;
+        };
+        // Resolve the component with RPM as well; do not dereference a pool
+        // while a world transition may be retiring it.
+        std::uintptr_t registry{};std::uint32_t entity{};
+        std::uint32_t health_key{};
+        if(!safe_copy(reinterpret_cast<std::uintptr_t>(image)+0x11DC54F4,&health_key,4)||health_key!=7)return false;
+        if(!player||!safe_copy(reinterpret_cast<std::uintptr_t>(player)+0x10,&registry,8)||
+            !safe_copy(reinterpret_cast<std::uintptr_t>(player)+0x18,&entity,4))return false;
+        const auto current=integration::navigation_native::component(registry,entity,0xFD3B0613,80,safe_copy);
+        return auto_leave::health_12650(current,health,safe_copy);
+    }
     const auto attributes=integration::navigation_native::component(
         read<std::uintptr_t>(player,0x10),read<std::uint32_t>(player,0x18),
         integration::navigation_native::attributes_hash,
@@ -115,6 +131,14 @@ bool request_leave_game_async(void* player) noexcept {
     auto* client=read<void*>(player,0xD70);
     auto* table=read<void**>(client);
     auto request=read<RequestLeave>(table,14*sizeof(void*));
+    if(integration::is_release_12650(integration::current_bedrock_build())) {
+        // Exact ClientInstance vtable and method; its native diagnostic names
+        // requestLeaveGameAsync. No arbitrary executable slot is accepted.
+        const unsigned char expected[]{0x55,0x56,0x57,0x48,0x81,0xEC,0x00,0x01,0x00,0x00,0x48,0x8D,0xAC,0x24,0x80,0x00,0x00,0x00};
+        if(!auto_leave_ready.load()||table!=reinterpret_cast<void**>(image+0xE9731B0)||
+            reinterpret_cast<Byte*>(request)!=image+0x5DA3B00||
+            std::memcmp(image+0x5DA3B00,expected,sizeof(expected)))return false;
+    }
     if(!client||!table||!executable_game_code(read<void*>(table))||
        !executable_game_code(reinterpret_cast<void*>(request)))return false;
 #if defined(_MSC_VER)
@@ -582,6 +606,20 @@ void __fastcall esp_tick_12650(void* player) {
     original_tick(player);
     void* table{};if(!camera_read(player,0,&table,sizeof(table))||table!=image+0xE8E1BC0)return;
     integration::game_context_detail::player.store(player,std::memory_order_release);
+    // AutoLeave runs on the engine's verified LocalPlayer tick, after native
+    // health updates, never on the overlay thread. Dimension changes rearm it.
+    if(auto_leave_ready.load()) {
+        static void* previous_player{};static void* previous_dimension{};
+        void* dimension{};
+        const bool valid=camera_read(player,0x1C8,&dimension,sizeof(dimension))&&dimension;
+        const bool changed=previous_player!=player||previous_dimension!=dimension;
+        previous_player=player;previous_dimension=valid?dimension:nullptr;
+        if(valid) {
+            auto_leave_tick(player,changed);
+            if(auto_leave_gate.fired())return;
+        }
+        else auto_leave_gate.reset();
+    }
     if(on(GameplayFeature::esp)) {
         try {capture_esp_12650();} catch(...) {
             std::lock_guard lock(frame_mutex);frame=Frame{};
@@ -908,6 +946,14 @@ void initialize() {
             Logger::instance().info("ESP unavailable: exact 26.50 local tick slot/prologue mismatch.");return;
         }
         Logger::instance().info("ESP: 26.50 read-only packed snapshots connected to validated native local tick; waiting for local registry and camera validation. No native actor-list calls.");
+        constexpr Byte leave_prologue[]{0x55,0x56,0x57,0x48,0x81,0xEC,0x00,0x01,0x00,0x00,0x48,0x8D,0xAC,0x24,0x80,0x00,0x00,0x00};
+        constexpr Byte component_stride[]{0x4B,0x8D,0x04,0x80,0xC1,0xE0,0x04,0x48,0x01,0xC1};
+        constexpr Byte instance_stride[]{0x4D,0x89,0xD0,0x4D,0x29,0xC8,0x4D,0x89,0xC1,0x49,0xC1,0xE1,0x05,0x4F,0x8D,0x04,0x41,0x4C,0x03,0x41,0x18};
+        auto_leave_ready=read<void*>(image,0xE9731B0+14*8)==image+0x5DA3B00&&
+            !std::memcmp(image+0x5DA3B00,leave_prologue,sizeof(leave_prologue))&&
+            !std::memcmp(image+0x2539878,component_stride,sizeof(component_stride))&&
+            !std::memcmp(image+0x31A129D,instance_stride,sizeof(instance_stride));
+        Logger::instance().info(auto_leave_ready.load()?"AutoLeave: exact 26.50 save/disconnect method verified; LocalPlayer tick health monitor connected, waiting for validated health attributes.":"AutoLeave unavailable: exact 26.50 leave-game method mismatch.");
         chest_ready=chest_esp::profile_verified(image);
         Logger::instance().info(chest_ready.load()?"ChestESP: exact 26.50 block/chunk lookup prologues verified; native local tick and +0x50 storage bounds connected.":"ChestESP unavailable: exact 26.50 native storage profile mismatch.");return;
     }
@@ -954,6 +1000,9 @@ ModuleCategory GameplayModule::category() const noexcept {
     default:return ModuleCategory::movement;}
 }
 bool GameplayModule::available() const noexcept {
+    if(feature_==GameplayFeature::auto_leave&&integration::is_release_12650(integration::current_bedrock_build())) {
+        float health{};return auto_leave_ready.load()&&current_health(integration::current_player(),health);
+    }
     if(feature_==GameplayFeature::esp||(feature_==GameplayFeature::chest_esp&&integration::is_release_12650(integration::current_bedrock_build()))) {
         if(integration::is_release_12650(integration::current_bedrock_build())) {
             static std::mutex validation_mutex;std::lock_guard lock(validation_mutex);
