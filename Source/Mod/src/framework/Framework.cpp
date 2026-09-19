@@ -87,7 +87,7 @@ bool Framework::initialize(HMODULE module) noexcept {
     }
     modules_.commands().set_eject_handler([this]{return request_eject();});
     Logger::instance().info(integration::install_chat_commands(modules_)
-        ? "Local comma commands installed: ,help, ,keybind, ,unbind and ,eject."
+        ? "Local period commands installed: .help, .keybind, .unbind and .eject."
         : "Local commands unavailable: unsupported chat signature or hook installation failed.");
     return true;
 }
