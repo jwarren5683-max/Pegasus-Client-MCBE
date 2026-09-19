@@ -198,7 +198,7 @@ int main(){
 
     DeathPositionTracker death_tracker;
     Vec3 death{};
-    int death_player{},death_dimension{},other_dimension{};
+    int death_player{},death_dimension{},death_other_dimension{};
     check(!death_tracker.update(&death_player,&death_dimension,true,20.0F,true,{10.2F,64.0F,-4.8F},death),
         "live death tracker sample must not fire");
     check(!death_tracker.update(&death_player,&death_dimension,false,0.0F,false,{},death),
@@ -210,7 +210,7 @@ int main(){
         "death transition must only fire once");
     check(!death_tracker.update(&death_player,&death_dimension,true,20.0F,true,{1,2,3},death),
         "respawn live sample must rearm without firing");
-    check(!death_tracker.update(&death_player,&other_dimension,true,0.0F,false,{},death),
+    check(!death_tracker.update(&death_player,&death_other_dimension,true,0.0F,false,{},death),
         "dimension transition must clear stale live position");
     check(!death_tracker.update(nullptr,nullptr,true,0.0F,false,{},death),
         "retired player must not reuse a stale death position");
