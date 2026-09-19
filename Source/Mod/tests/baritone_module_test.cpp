@@ -13,11 +13,11 @@ int main(){try {
     const auto call=[&](const char* text){std::vector<std::string> replies;
         require(modules.commands().execute(text,modules,replies),"local command leaked");
         require(!replies.empty(),"no command feedback");return replies;};
-    require(call(",help").size()==10,"navigation help registration");
-    require(call(",goto 10 20")[0].find("unavailable")!=std::string::npos,"missing native capabilities hidden");
-    require(call(",baritone status")[0].find("supported executable")!=std::string::npos,"capability diagnostics missing");
-    require(call(",mine -1 stone")[0].find("positive")!=std::string::npos,"syntax not checked before availability");
-    require(call(",stop")[0].find("Stopped")!=std::string::npos,"stop unavailable module");
+    require(call(".help").size()==10,"navigation help registration");
+    require(call(".goto 10 20")[0].find("unavailable")!=std::string::npos,"missing native capabilities hidden");
+    require(call(".baritone status")[0].find("supported executable")!=std::string::npos,"capability diagnostics missing");
+    require(call(".mine -1 stone")[0].find("positive")!=std::string::npos,"syntax not checked before availability");
+    require(call(".stop")[0].find("Stopped")!=std::string::npos,"stop unavailable module");
     module->set_enabled(true);require(!module->enabled(),"unsupported module enabled");
     for(std::size_t i=0;i<6;++i){require(!module->boolean_setting_name(i).empty(),"setting label missing");
         module->set_boolean_setting(i,false);require(!module->boolean_setting(i),"setting false");
