@@ -12,7 +12,7 @@ Minecraft `1.26.5101.0` (Bedrock 26.50) is now recognized by an exact executable
 - **Auto Leave** appears under Combat. Its slider selects a threshold from 0.5 to 10 hearts in half-heart steps (default 4). Two valid low-health ticks trigger Bedrock's normal asynchronous leave flow once, returning to the world list without closing Minecraft.
 - On remote servers, Fullbright, ArrayList, and Auto Leave remain available; combat automation, reach, X-ray, movement modification, ESP, Ghost Hand, and Baritone do not. Server rules remain authoritative, including rules about automatic actions.
 - Phase module doesn't work, and the speed module works but is janky.
-- You can type ',help' in the chat while the client is loaded in your game and it will show you some commands the client provides.
+- You can type '.help' in the chat while the client is loaded in your game and it will show you some commands the client provides.
 - Server restrictions remain authoritative. This build does not attempt to evade anti-cheat or server-side validation.
 - I am trying to add a baritone style autominer to the client but its not ready yet. I also would like to add many more modules in the future.
 - If the client breaks, restart minecraft. This shouldn't happen in most circumstances. It can happen if you eject and re-inject the client however. 
