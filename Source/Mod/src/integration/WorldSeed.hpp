@@ -1,27 +1,32 @@
 #pragma once
 
-#include <atomic>
 #include <cstdint>
+#include <mutex>
 
 namespace utility::integration {
 
 namespace world_seed_detail {
-inline std::atomic<std::uint64_t> value{};
-inline std::atomic_bool valid{};
+inline std::mutex mutex;
+inline std::uint64_t value{};
+inline bool valid{};
 }
 
 inline void reset_world_seed() noexcept {
-    world_seed_detail::valid.store(false, std::memory_order_release);
+    std::lock_guard lock(world_seed_detail::mutex);
+    world_seed_detail::valid=false;
+    world_seed_detail::value=0;
 }
 
 inline void publish_world_seed(std::uint64_t seed) noexcept {
-    world_seed_detail::value.store(seed, std::memory_order_relaxed);
-    world_seed_detail::valid.store(true, std::memory_order_release);
+    std::lock_guard lock(world_seed_detail::mutex);
+    world_seed_detail::value=seed;
+    world_seed_detail::valid=true;
 }
 
 [[nodiscard]] inline bool current_world_seed(std::int64_t& seed) noexcept {
-    if (!world_seed_detail::valid.load(std::memory_order_acquire)) return false;
-    seed = static_cast<std::int64_t>(world_seed_detail::value.load(std::memory_order_relaxed));
+    std::lock_guard lock(world_seed_detail::mutex);
+    if(!world_seed_detail::valid) return false;
+    seed=static_cast<std::int64_t>(world_seed_detail::value);
     return true;
 }
 
