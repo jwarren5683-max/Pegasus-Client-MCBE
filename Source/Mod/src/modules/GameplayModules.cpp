@@ -72,6 +72,7 @@ private:
     enum : unsigned { disarmed, pending, sending, sent };
     std::atomic<unsigned> state_{disarmed};
 };
+constexpr char startup_notice_text[]="[Loki] Loaded";
 StartupNoticeGate startup_notice;
 unsigned key_bit(unsigned code) {
     switch(code) { case 'W': return 1; case 'S': return 2; case 'A': return 4; case 'D': return 8; case VK_SPACE: return 16; default: return 0; }
@@ -471,7 +472,7 @@ bool local_chat(void* player, const char* text) {
     return true;
 }
 void startup_notice_tick(void* player) noexcept {
-    if(startup_notice.try_send(player,[](void* current){return local_chat(current,"[Loki] Loaded");}))
+    if(startup_notice.try_send(player,[](void* current){return local_chat(current,startup_notice_text);}))
         Logger::instance().info("Startup chat notice displayed.");
 }
 bool copy_clipboard(const wchar_t* text) {
