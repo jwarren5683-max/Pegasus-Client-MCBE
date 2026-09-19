@@ -9,6 +9,7 @@
 #include "JetpackPolicy.hpp"
 #include "ChestEspContainers.hpp"
 #include "../integration/GameContext.hpp"
+#include "../integration/WorldSeed.hpp"
 #include "../integration/NavigationBridge.hpp"
 #include "../integration/ServerSafety.hpp"
 #include "../integration/NavigationNativeLayout.hpp"
@@ -149,6 +150,40 @@ bool executable_game_code(const void* address) {
        information.State!=MEM_COMMIT||information.Type!=MEM_IMAGE||information.AllocationBase!=image)return false;
     constexpr DWORD executable=PAGE_EXECUTE|PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY;
     return (information.Protect&executable)!=0 && (information.Protect&PAGE_GUARD)==0;
+}
+
+constexpr std::size_t block_source_get_chunk_slot_12650=0x148;
+constexpr std::size_t block_source_get_seed_slot_12650=0x160;
+static_assert(block_source_get_seed_slot_12650==block_source_get_chunk_slot_12650+3*sizeof(void*));
+
+void refresh_world_seed_12650(void* player) noexcept {
+    static void* previous_player{};
+    static void* previous_dimension{};
+    auto* dimension=read<void*>(player,0x1C8);
+    if(player!=previous_player||dimension!=previous_dimension) {
+        integration::reset_world_seed();
+        previous_player=player;
+        previous_dimension=dimension;
+    }
+    if(!player||!dimension||!image) return;
+    std::int64_t cached{};
+    if(integration::current_world_seed(cached)) return;
+    const auto* profile=chest_esp::profile(image);
+    if(profile!=&chest_esp::profile_12650||!chest_esp::profile_verified(image)) return;
+    auto* region=read<void*>(dimension,0xF0);
+    auto* table=read<void**>(region);
+    if(!region||!table||read<void*>(table,block_source_get_chunk_slot_12650)!=image+profile->get_chunk) return;
+    using GetSeed=std::uint64_t(__fastcall*)(void*);
+    const auto get_seed=read<GetSeed>(table,block_source_get_seed_slot_12650);
+    if(!executable_game_code(reinterpret_cast<void*>(get_seed))) return;
+    std::uint64_t seed{};
+#if defined(_MSC_VER)
+    __try { seed=get_seed(region); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { return; }
+#else
+    seed=get_seed(region);
+#endif
+    integration::publish_world_seed(seed);
 }
 
 // IClientInstance::requestLeaveGameAsync is vtable slot 14 in the supported
@@ -676,6 +711,7 @@ void __fastcall esp_tick_12650(void* player) {
     void* table{};if(!camera_read(player,0,&table,sizeof(table))||table!=image+0xE8E1BC0)return;
     integration::game_context_detail::player.store(player,std::memory_order_release);
     startup_notice_tick(player);
+    refresh_world_seed_12650(player);
     // AutoLeave runs on the engine's verified LocalPlayer tick, after native
     // health updates, never on the overlay thread. Dimension changes rearm it.
     if(auto_leave_ready.load()) {
