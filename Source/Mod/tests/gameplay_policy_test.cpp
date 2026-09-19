@@ -16,7 +16,7 @@ int main(){
     legacy_chat_build.kind=utility::integration::BedrockBuildKind::release_12645;
     current_chat_build.kind=utility::integration::BedrockBuildKind::release_12650;
     check(local_chat_supported_build(legacy_chat_build),"legacy verified local-chat display remains enabled");
-    check(!local_chat_supported_build(current_chat_build),"26.50 unverified local-chat display must fail closed");
+    check(local_chat_supported_build(current_chat_build),"26.50 verified local-chat display must be enabled");
     int startup_calls{};
     int startup_player_token{};
     startup_notice.arm();

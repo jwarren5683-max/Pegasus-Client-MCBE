@@ -4,6 +4,7 @@
 #include "../integration/BedrockBuild.hpp"
 #include "../integration/ChatCommands.hpp"
 #include "../integration/CompatibilityProbe.hpp"
+#include "../integration/GameContext.hpp"
 #include "../integration/WorldSeed.hpp"
 #include "../modules/AntiKnockbackModule.hpp"
 #include "../modules/CriticalsModule.hpp"
@@ -48,7 +49,7 @@ bool Framework::initialize(HMODULE module) noexcept {
         message << "Minecraft executable profile: PE timestamp 0x" << std::uppercase << std::hex
             << std::setw(8) << std::setfill('0') << build.timestamp << ", SizeOfImage 0x"
             << std::setw(8) << build.image_size;
-        if (integration::is_release_12650(build)) message << " (Minecraft 1.26.5101.0 recognized; native targets pending validation).";
+        if (integration::is_release_12650(build)) message << " (Minecraft 1.26.5101.0 exact profile; unverified targets remain disabled).";
         else if (integration::is_release_12645(build)) message << " (Minecraft 1.26.4501.0 legacy profile).";
         else message << " (unsupported profile).";
         Logger::instance().info(message.str());
@@ -61,6 +62,7 @@ bool Framework::initialize(HMODULE module) noexcept {
     }
 
     config_.load_defaults();
+    integration::clear_game_context();
     if(modules::reach_implementation_size()==sizeof(modules::ReachModule)) {
         Logger::instance().info("Reach build layout validated across factory and implementation.");
         auto entity_reach = std::make_unique<modules::ReachModule>();
@@ -103,6 +105,7 @@ void Framework::shutdown() noexcept {
     modules::disarm_startup_notice();
     integration::reset_world_seed();
     integration::stop_chat_commands(true);
+    integration::clear_game_context();
     renderer_.shutdown();
     splash_text_hook_.uninstall();
     modules_.deactivate();

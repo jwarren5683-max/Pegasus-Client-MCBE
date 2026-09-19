@@ -15,12 +15,12 @@ The existing client was built for `1.26.4501.0` (`0x6A8378BA`, `0x12888000`). Th
 - Added a standalone read-only scanner for the same signatures. It may need to be run with the same permission level as Minecraft.
 - Kept every unverified native feature unavailable rather than applying a guessed address.
 - Added CI packaging for the DLL, injector, scanner, tests, and documentation.
+- Verified the 26.50 chat submit target (`0x4DE18B0`), input field (`ChatScreenController + 0xD60`), screen model (`+0xD48`), client handle layout, `GuiData` acquisition slot (`+0x6D0`), and local display target/ABI (`0x155F190`).
+- Restored local period commands, `[Loki] Loaded`, and Death Position chat output with exact PE and byte fingerprints. Native calls are guarded and the returned UI references follow the cleanup sequence emitted by the game.
+- Confirmed the existing 26.50 working set initializes after live injection: Reach, Block Reach, X-Ray, Fullbright, ESP, ChestESP, Auto Leave, and Auto Bridge. Other unverified modules remain `N/A`.
 
-## Remaining port order
+## Current scope
 
-1. Validate the 1.26.50 player and GameMode identities from the probe output.
-2. Restore basic player context and Fullbright first.
-3. Restore movement and world/visual modules in small verified groups.
-4. Revalidate combat modules last because their hooks carry the greatest crash risk.
+This release finalizes chat and the already-verified working module set. It deliberately does not port unsupported modules from 26.45 addresses. Those modules stay `N/A` until separately verified against an exact future target.
 
 Passing unit tests proves the client and safety policies compile and behave under controlled fixtures. An individual native module is only considered 1.26.50-compatible after its exact live signature and object layout are verified in a fresh Minecraft session.
