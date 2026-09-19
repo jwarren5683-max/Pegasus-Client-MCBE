@@ -72,6 +72,9 @@ int main() {
         require(execute(".copy seed")[0].find("not available")!=std::string::npos,"copy unavailable seed");
         integration::publish_world_seed(987654321ULL);
         require(execute(".copy seed")[0].starts_with("Copied") && clipboard.back()=="987654321","copy seed clipboard");
+        commands.set_clipboard_writer([](std::string_view){return false;});
+        require(execute(".copy seed")[0].find("Could not access")!=std::string::npos,"copy clipboard failure feedback");
+        commands.set_clipboard_writer([&](std::string_view text){clipboard.emplace_back(text);return true;});
         integration::reset_world_seed();
         require(execute(".copy coords")[0].find("not available")!=std::string::npos,"copy unavailable coords");
         std::array<unsigned char,0x240> coordinate_player{};
