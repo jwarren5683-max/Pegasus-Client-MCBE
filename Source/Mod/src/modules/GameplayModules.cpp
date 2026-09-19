@@ -51,6 +51,31 @@ std::atomic<unsigned> auto_leave_revision{};
 std::atomic_bool auto_leave_ready{};
 std::atomic_bool auto_bridge_ready{};
 auto_leave::Gate auto_leave_gate;
+class DeathPositionTracker final {
+public:
+    void reset() noexcept { player_=nullptr;dimension_=nullptr;was_alive_=false;last_alive_={}; }
+    bool update(void* player,void* dimension,bool health_valid,float health,
+        bool position_valid,Vec3 position,Vec3& death) noexcept {
+        if(player!=player_||dimension!=dimension_) {
+            player_=player;dimension_=dimension;was_alive_=false;last_alive_={};
+        }
+        if(!health_valid) return false;
+        if(health>0.0F) {
+            if(position_valid) { last_alive_=position;was_alive_=true; }
+            return false;
+        }
+        if(!was_alive_) return false;
+        was_alive_=false;
+        death=last_alive_;
+        return true;
+    }
+private:
+    void* player_{};
+    void* dimension_{};
+    bool was_alive_{};
+    Vec3 last_alive_{};
+};
+DeathPositionTracker death_position_tracker_12650;
 class StartupNoticeGate final {
 public:
     void arm() noexcept {
@@ -541,6 +566,30 @@ bool copy_clipboard(const wchar_t* text) {
     const bool ok=EmptyClipboard() && SetClipboardData(CF_UNICODETEXT,memory);
     CloseClipboard(); if(!ok)GlobalFree(memory); return ok;
 }
+void death_position_tick_12650(void* player) noexcept {
+    static wchar_t pending_clipboard[128]{};
+    void* dimension{};
+    const bool dimension_valid=camera_read(player,0x1C8,&dimension,sizeof(dimension))&&dimension;
+    float health{};
+    const bool health_valid=dimension_valid&&current_health(player,health);
+    void* shape{};
+    Vec3 position{};
+    const bool position_valid=dimension_valid&&camera_read(player,0x220,&shape,sizeof(shape))&&shape&&
+        camera_read(shape,0,&position,sizeof(position))&&valid(position);
+    Vec3 death{};
+    if(death_position_tracker_12650.update(player,dimension_valid?dimension:nullptr,
+        health_valid,health,position_valid,position,death)&&on(GameplayFeature::deathposition)) {
+        const int x=static_cast<int>(std::floor(death.x+0.3F));
+        const int y=static_cast<int>(std::floor(death.y));
+        const int z=static_cast<int>(std::floor(death.z+0.3F));
+        char message[160]{};
+        std::snprintf(message,sizeof(message),"Death position: %d, %d, %d",x,y,z);
+        swprintf_s(pending_clipboard,L"%d %d %d",x,y,z);
+        local_chat(player,message);
+        Logger::instance().info(message);
+    }
+    if(pending_clipboard[0]&&copy_clipboard(pending_clipboard))pending_clipboard[0]=0;
+}
 
 void autotool(void* game_mode,const void* position) {
     if (!on(GameplayFeature::autotool) || !position) return;
@@ -734,6 +783,7 @@ void __fastcall esp_tick_12650(void* player) {
     integration::game_context_detail::player.store(player,std::memory_order_release);
     startup_notice_tick(player);
     refresh_world_seed_12650(player);
+    death_position_tick_12650(player);
     // AutoLeave runs on the engine's verified LocalPlayer tick, after native
     // health updates, never on the overlay thread. Dimension changes rearm it.
     if(auto_leave_ready.load()) {
@@ -1188,6 +1238,16 @@ bool GameplayModule::available() const noexcept {
         float health{};return auto_leave_ready.load()&&current_health(integration::current_player(),health);
     }
     if(feature_==GameplayFeature::auto_bridge) return auto_bridge_ready.load();
+    if(feature_==GameplayFeature::deathposition&&integration::is_release_12650(integration::current_bedrock_build())) {
+        if(!image) return false;
+        void* player=integration::current_player();
+        float health{};
+        void* shape{};
+        Vec3 position{};
+        return player&&current_health(player,health)&&
+            camera_read(player,0x220,&shape,sizeof(shape))&&shape&&
+            camera_read(shape,0,&position,sizeof(position))&&valid(position);
+    }
     if(feature_==GameplayFeature::esp||(feature_==GameplayFeature::chest_esp&&integration::is_release_12650(integration::current_bedrock_build()))) {
         if(integration::is_release_12650(integration::current_bedrock_build())) {
             static std::mutex validation_mutex;std::lock_guard lock(validation_mutex);
