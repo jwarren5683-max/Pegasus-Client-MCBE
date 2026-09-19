@@ -12,15 +12,26 @@ int main() {
     std::memcpy(object.data() + 0x20, &size, sizeof(size));
     std::memcpy(object.data() + 0x28, &capacity, sizeof(capacity));
     utility::integration::replace_splash_text(object.data());
-    assert(std::strcmp(buffer, "made by Roundomegaboi") == 0);
+    assert(std::strcmp(buffer, "Loki") == 0);
     std::memcpy(&size, object.data() + 0x20, sizeof(size));
-    assert(size == std::strlen("made by Roundomegaboi"));
+    assert(size == std::strlen("Loki"));
     assert(storage[size + 1] == '#');
 
-    // Short inline strings must never be overrun by the longer branding.
+    // Inline strings with sufficient capacity should accept the shorter Loki branding.
     object.fill(std::byte{});
     std::memcpy(object.data() + 0x10, "short", 6);
     size = 5; capacity = 15;
+    std::memcpy(object.data() + 0x20, &size, sizeof(size));
+    std::memcpy(object.data() + 0x28, &capacity, sizeof(capacity));
+    utility::integration::replace_splash_text(object.data());
+    assert(std::strcmp(reinterpret_cast<const char*>(object.data() + 0x10), "Loki") == 0);
+    std::memcpy(&size, object.data() + 0x20, sizeof(size));
+    assert(size == std::strlen("Loki"));
+
+    // Insufficient capacity still fails closed.
+    object.fill(std::byte{});
+    std::memcpy(object.data() + 0x10, "abc", 4);
+    size = 3; capacity = 3;
     std::memcpy(object.data() + 0x20, &size, sizeof(size));
     std::memcpy(object.data() + 0x28, &capacity, sizeof(capacity));
     auto before = object;
