@@ -1,4 +1,5 @@
 #include "../src/integration/ChatCommands.cpp"
+#include "../src/integration/WorldSeed.hpp"
 #include <iostream>
 #include <stdexcept>
 
@@ -46,14 +47,24 @@ int main() {
         require(!commands.execute(" .help",modules,ordinary),"only leading period is a command");
         require(!commands.execute(",help",modules,ordinary),"legacy comma prefix is still consumed");
         const auto help=execute(".help");
-        require(help.size()==5,"help must contain exactly one row per command");
-        require(help[0].starts_with(".help") && help[1].starts_with(".loki") && help[2].starts_with(".keybind") && help[3].starts_with(".unbind") && help[4].starts_with(".eject"),"help registry");
+        require(help.size()==6,"help must contain exactly one row per command");
+        require(help[0].starts_with(".help") && help[1].starts_with(".loki") && help[2].starts_with(".seed") && help[3].starts_with(".keybind") && help[4].starts_with(".unbind") && help[5].starts_with(".eject"),"help registry");
         for (const auto& line:help) require(line.find('\n')==std::string::npos && line.size()<140,"help must stay concise");
         const auto loki=execute(".loki");
         require(loki.size()==2,"loki command must return two lines");
         require(loki[0]=="Loki | Minecraft 26.50","loki build line");
         require(loki[1]=="Confirmed: Reach, Block Reach, X-Ray, Fullbright, ESP, ChestESP, Auto Leave, Auto Bridge","loki feature line");
         require(execute(".loki extra")[0].starts_with("Usage: .loki"),"loki arity");
+        integration::reset_world_seed();
+        require(execute(".seed")[0].find("not available")!=std::string::npos,"seed unavailable feedback");
+        integration::publish_world_seed(0);
+        require(execute(".seed")[0]=="World Seed: 0","zero world seed is valid");
+        integration::publish_world_seed(123456789ULL);
+        require(execute(".seed")[0]=="World Seed: 123456789","positive world seed");
+        integration::publish_world_seed(~std::uint64_t{});
+        require(execute(".seed")[0]=="World Seed: -1","signed world seed");
+        require(execute(".seed extra")[0].starts_with("Usage: .seed"),"seed arity");
+        integration::reset_world_seed();
         unsigned eject_calls{};
         commands.set_eject_handler([&]{++eject_calls;return false;});
         require(execute(".eject extra")[0].starts_with("Usage:"),"eject arity");
@@ -138,7 +149,7 @@ int main() {
         };
         submit("normal message");submit("/help");submit("hello, world");submit(" .help");
         require(sent==std::vector<std::string>({"normal message","/help","hello, world"," .help"}),"normal native chat changed");
-        submit(".help");submit(".loki");submit(".keybind \"Test Module\" G toggle");submit(".unknown");submit(".");submit(".help extra");
+        submit(".help");submit(".loki");submit(".seed");submit(".keybind \"Test Module\" G toggle");submit(".unknown");submit(".");submit(".help extra");
         submit(".keybind \"Test Module\" G bad");submit("."+std::string(33000,'x'));
         submit(".unbind \"Test Module\"");submit(".unbind Missing");submit(".unbind");
         require(sent.size()==4,"command leaked into native sender");require(displayed.size()>=7,"missing local feedback");

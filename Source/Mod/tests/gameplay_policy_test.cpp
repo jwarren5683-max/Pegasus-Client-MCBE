@@ -30,6 +30,10 @@ int main(){
     check(startup_notice.try_send(&startup_player_token,[&](void*){++startup_calls;return true;})&&startup_calls==3,
         "startup notice can rearm cleanly for a later client session");
     startup_notice.disarm();
+    check(seed_looks_like_process_pointer(reinterpret_cast<std::uintptr_t>(&startup_calls)),
+        "seed accessor pointer-like results must fail closed");
+    check(!seed_looks_like_process_pointer(123456789ULL),
+        "ordinary signed seed must not be rejected as a pointer");
     std::array<Byte,0xE00> leave_player{};
     void* leave_table[15]{};
     struct FakeClient { void** table; } leave_client{leave_table};

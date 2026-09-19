@@ -4,6 +4,7 @@
 #include "../integration/BedrockBuild.hpp"
 #include "../integration/ChatCommands.hpp"
 #include "../integration/CompatibilityProbe.hpp"
+#include "../integration/WorldSeed.hpp"
 #include "../modules/AntiKnockbackModule.hpp"
 #include "../modules/CriticalsModule.hpp"
 #include "../modules/XrayModule.hpp"
@@ -87,8 +88,9 @@ bool Framework::initialize(HMODULE module) noexcept {
     }
     modules_.commands().set_eject_handler([this]{return request_eject();});
     Logger::instance().info(integration::install_chat_commands(modules_)
-        ? "Local period commands installed: .help, .keybind, .unbind and .eject."
+        ? "Local period commands installed: .help, .loki, .seed, .keybind, .unbind and .eject."
         : "Local commands unavailable: unsupported chat signature or hook installation failed.");
+    integration::reset_world_seed();
     modules::arm_startup_notice();
     return true;
 }
@@ -99,6 +101,7 @@ void Framework::shutdown() noexcept {
     }
 
     modules::disarm_startup_notice();
+    integration::reset_world_seed();
     integration::stop_chat_commands(true);
     renderer_.shutdown();
     splash_text_hook_.uninstall();
