@@ -28,7 +28,7 @@ void BaritoneModule::native_tick(void* player) noexcept {
         if(!ready_){integration::navigation_owns_controls=false;return;}
         last_frame_=adapter_.observe(player,controller_.mining_targets());
         if(stop_requested_.exchange(false)||!enabled()){commands_.clear();controller_.stop();adapter_.release();return;}
-        if(suspend_requested_.exchange(false)){controller_.pause("Gameplay interrupted; use ,resume.");adapter_.release();}
+        if(suspend_requested_.exchange(false)){controller_.pause("Gameplay interrupted; use .resume.");adapter_.release();}
         while(!commands_.empty()) {
             const auto command=std::move(commands_.front());commands_.pop_front();
             if(command.kind==navigation::CommandKind::mine)last_frame_=adapter_.observe(player,command.blocks);
@@ -43,10 +43,10 @@ void BaritoneModule::native_tick(void* player) noexcept {
     }
 }
 std::vector<std::string> BaritoneModule::command_help() const {
-    return {",goto <x> <z> | <x> <y> <z> - Travel to coordinates; supports ~offset.",
-        ",mine [quantity] <block> [block...] - Mine selected blocks.",
-        ",pause - Pause the Baritone job.",",resume - Resume a paused Baritone job.",
-        ",stop - Cancel the Baritone job.",",baritone status - Show job status or unavailable interfaces."};
+    return {".goto <x> <z> | <x> <y> <z> - Travel to coordinates; supports ~offset.",
+        ".mine [quantity] <block> [block...] - Mine selected blocks.",
+        ".pause - Pause the Baritone job.",".resume - Resume a paused Baritone job.",
+        ".stop - Cancel the Baritone job.",".baritone status - Show job status or unavailable interfaces."};
 }
 bool BaritoneModule::handle_command(const std::vector<std::string>& args,std::vector<std::string>& replies) {
     const auto parsed=navigation::parse_command(args);if(!parsed.handled)return false;
