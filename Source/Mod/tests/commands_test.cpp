@@ -1,4 +1,5 @@
 #include "../src/integration/ChatCommands.cpp"
+#include "../src/integration/WorldSeed.hpp"
 #include <iostream>
 #include <stdexcept>
 
