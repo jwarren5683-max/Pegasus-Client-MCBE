@@ -37,20 +37,20 @@ ParseResult parse_command(const std::vector<std::string>& args) {
     const auto name=lowercase(args[0]);Command command;
     if(name=="goto") {
         r.handled=true;command.kind=CommandKind::go;
-        const auto bad=[&]{r.error="Usage: ,goto <x> <z> or ,goto <x> <y> <z> (integers or ~offset).";};
+        const auto bad=[&]{r.error="Usage: .goto <x> <z> or ,goto <x> <y> <z> (integers or ~offset).";};
         if(args.size()!=3&&args.size()!=4){bad();return r;}
         command.has_y=args.size()==4;
         if(!coordinate(args[1],command.x)||!coordinate(args.back(),command.z)||
             (command.has_y&&!coordinate(args[2],command.y))){bad();return r;}
     } else if(name=="mine") {
         r.handled=true;command.kind=CommandKind::mine;
-        if(args.size()<2){r.error="Usage: ,mine [quantity] <block> [block...]";return r;}
+        if(args.size()<2){r.error="Usage: .mine [quantity] <block> [block...]";return r;}
         std::size_t first=1;
         if(!args[1].empty() && ((args[1][0]>='0'&&args[1][0]<='9')||args[1][0]=='-'||args[1][0]=='+')) {
             if(!integer(args[1],command.quantity)||command.quantity<=0){r.error="Mining quantity must be a positive integer.";return r;}
             ++first;
         }
-        if(first==args.size()){r.error="Usage: ,mine [quantity] <block> [block...]";return r;}
+        if(first==args.size()){r.error="Usage: .mine [quantity] <block> [block...]";return r;}
         for(auto i=first;i<args.size();++i) {
             auto block=lowercase(args[i]);
             if(!identifier(block)){r.error="Invalid block identifier: "+args[i];return r;}
@@ -60,11 +60,11 @@ ParseResult parse_command(const std::vector<std::string>& args) {
         if(command.blocks.size()>64){r.error="Choose at most 64 block identifiers.";return r;}
     } else if(name=="pause"||name=="resume"||name=="stop") {
         r.handled=true;
-        if(args.size()!=1){r.error="Usage: ,"+name+" (no arguments).";return r;}
+        if(args.size()!=1){r.error="Usage: ."+name+" (no arguments).";return r;}
         command.kind=name=="pause"?CommandKind::pause:name=="resume"?CommandKind::resume:CommandKind::stop;
     } else if(name=="baritone") {
         r.handled=true;
-        if(args.size()!=2||lowercase(args[1])!="status"){r.error="Usage: ,baritone status";return r;}
+        if(args.size()!=2||lowercase(args[1])!="status"){r.error="Usage: .baritone status";return r;}
         command.kind=CommandKind::status;
     } else return r;
     r.command=std::move(command);return r;
