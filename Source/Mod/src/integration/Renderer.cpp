@@ -72,7 +72,7 @@ DWORD Renderer::run() noexcept {
  WNDCLASSEXW c{sizeof(c)};c.lpfnWndProc=window_procedure;c.hInstance=module_;
  c.hCursor=LoadCursorW(nullptr,IDC_ARROW);c.lpszClassName=overlay_class_name;
  if(!RegisterClassExW(&c) && GetLastError()!=ERROR_CLASS_ALREADY_EXISTS){SetEvent(ready_event_);return 1;}
- overlay_window_=CreateWindowExW(WS_EX_LAYERED|WS_EX_TRANSPARENT|WS_EX_TOOLWINDOW|WS_EX_TOPMOST,overlay_class_name,L"clickGUI",WS_POPUP,
+ overlay_window_=CreateWindowExW(WS_EX_LAYERED|WS_EX_TRANSPARENT|WS_EX_TOOLWINDOW|WS_EX_TOPMOST,overlay_class_name,L"Loki",WS_POPUP,
   0,0,1,1,nullptr,nullptr,module_,this);
  if(!overlay_window_){SetEvent(ready_event_);return 1;}
  SetLayeredWindowAttributes(overlay_window_,transparent_key,255,LWA_COLORKEY);
@@ -295,7 +295,7 @@ void Renderer::paint_legacy(HDC device) noexcept {
     hits_.clear();
     const auto rows = rows_for_category(*modules_, categories[legacy_category_].category);
     const int count = legacy_expanded_ ? (std::max)(1, static_cast<int>(rows.size())) : 7;
-    fill_rectangle(device, {12, 12, 266, 64 + count * 26}, RGB(25, 29, 34));
+    fill_rectangle(device, {12, 12, 266, 64 + count * 26}, RGB(18, 28, 21));
     const auto font = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
     const auto previous = SelectObject(device, font);
@@ -304,11 +304,11 @@ void Renderer::paint_legacy(HDC device) noexcept {
         SetTextColor(device, color); RECT rect{22, y, 256, y + 26};
         DrawTextW(device, text.c_str(), -1, &rect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
     };
-    line(legacy_expanded_ ? categories[legacy_category_].name : L"Utility Modules", 18, RGB(86, 213, 234));
+    line(legacy_expanded_ ? categories[legacy_category_].name : L"Loki", 18, RGB(74, 222, 128));
     for (int i = 0; i < count; ++i) {
         const bool selected = i == (legacy_expanded_ ? legacy_module_ : legacy_category_);
         std::wstring text = selected ? L"> " : L"  ";
-        COLORREF color = selected ? RGB(86, 213, 234) : RGB(205, 211, 216);
+        COLORREF color = selected ? RGB(74, 222, 128) : RGB(205, 211, 216);
         if (!legacy_expanded_) text += categories[i].name;
         else if (rows.empty()) text = L"No modules";
         else {
@@ -360,7 +360,7 @@ void Renderer::paint(HWND window) noexcept {
                 auto text = widen(module->name());
                 RECT shadow{15,y+1,client_width-13,y+24}; SetTextColor(device,RGB(0,0,0));
                 DrawTextW(device,text.c_str(),-1,&shadow,alignment|DT_SINGLELINE|DT_NOPREFIX);
-                RECT line{14,y,client_width-14,y+23}; SetTextColor(device,RGB(86,213,234));
+                RECT line{14,y,client_width-14,y+23}; SetTextColor(device,RGB(74,222,128));
                 DrawTextW(device,text.c_str(),-1,&line,alignment|DT_SINGLELINE|DT_NOPREFIX);
                 y += 23;
             }
@@ -398,8 +398,8 @@ void Renderer::paint(HWND window) noexcept {
         };
         for (const auto& row : rows) if (row.module == settings_module_) height += settings_height(row.module);
         group_height = (std::max)(group_height, height);
-        HBRUSH brush = CreateSolidBrush(RGB(25, 29, 34));
-        HPEN pen = CreatePen(PS_SOLID, 1, RGB(52, 183, 204));
+        HBRUSH brush = CreateSolidBrush(RGB(18, 28, 21));
+        HPEN pen = CreatePen(PS_SOLID, 1, RGB(34, 197, 94));
         const auto old_brush = SelectObject(device, brush);
         const auto old_pen = SelectObject(device, pen);
         RoundRect(device, x, y, x + width, y + height, 12, 12);
@@ -411,16 +411,16 @@ void Renderer::paint(HWND window) noexcept {
         for (const auto& row : rows) {
             auto* module = row.module;
             RECT rect{x + 5, row_y, x + width - 5, row_y + 30};
-            if (module->enabled()) fill_rectangle(device, rect, RGB(28, 58, 66));
+            if (module->enabled()) fill_rectangle(device, rect, RGB(20, 61, 35));
             label(widen(module->name()), {x + 12, row_y, x + width - 42, row_y + 30},
-                !module->usable() ? RGB(111, 119, 129) : module->enabled() ? RGB(86, 213, 234) : RGB(205, 211, 216));
+                !module->usable() ? RGB(111, 119, 129) : module->enabled() ? RGB(74, 222, 128) : RGB(205, 211, 216));
             label(module->usable() ? (has_settings(module) ? (settings_module_ == module ? L"-" : L"+") : L"") : L"N/A",
                 {x + width - 42, row_y, x + width - 12, row_y + 30}, RGB(170, 185, 195), DT_RIGHT);
             if (rect.top >= 0 && rect.bottom <= viewport_height_) hits_.push_back({rect, module, 0});
             row_y += 30;
             if (settings_module_ == module) {
                 const int expanded_height=settings_height(module);
-                fill_rectangle(device, {x + 6, row_y, x + width - 6, row_y + expanded_height - 4}, RGB(18, 22, 27));
+                fill_rectangle(device, {x + 6, row_y, x + width - 6, row_y + expanded_height - 4}, RGB(14, 24, 17));
                 if (module->has_value()) {
                     wchar_t value[80]{};
                     swprintf_s(value, L"%ls: %.*f%ls", widen(module->value_label()).c_str(),
@@ -431,10 +431,10 @@ void Renderer::paint(HWND window) noexcept {
                     const float fraction = range > 0 ? std::clamp((module->value() - module->minimum_value()) / range, 0.0F, 1.0F) : 0;
                     const int thumb = slider.left + static_cast<int>(fraction * (slider.right - slider.left - 1));
                     const int middle = (slider.top + slider.bottom) / 2;
-                    fill_rectangle(device, {slider.left, middle - 2, slider.right, middle + 3}, RGB(60, 72, 82));
-                    fill_rectangle(device, {slider.left, middle - 2, thumb, middle + 3}, RGB(52, 183, 204));
+                    fill_rectangle(device, {slider.left, middle - 2, slider.right, middle + 3}, RGB(49, 74, 57));
+                    fill_rectangle(device, {slider.left, middle - 2, thumb, middle + 3}, RGB(34, 197, 94));
                     fill_rectangle(device, {(std::max)(slider.left, static_cast<LONG>(thumb - 4)), middle - 8,
-                        (std::min)(slider.right, static_cast<LONG>(thumb + 5)), middle + 9}, RGB(86, 213, 234));
+                        (std::min)(slider.right, static_cast<LONG>(thumb + 5)), middle + 9}, RGB(74, 222, 128));
                     if (slider.top >= 0 && slider.bottom <= viewport_height_) hits_.push_back({slider, module, 1});
                 } else if (module->boolean_setting_count()) {
                     for(std::size_t setting=0;setting<module->boolean_setting_count();++setting){
