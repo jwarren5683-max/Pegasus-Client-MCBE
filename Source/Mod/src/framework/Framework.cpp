@@ -54,7 +54,7 @@ bool Framework::initialize(HMODULE module) noexcept {
     }
     integration::run_compatibility_probe();
     if (splash_text_hook_.install()) {
-        Logger::instance().info("Native splash-text hook installed; replacement is 'made by Roundomegaboi'.");
+        Logger::instance().info("Native splash-text hook installed; replacement is 'Loki'.");
     } else {
         Logger::instance().info("Native splash-text hook not installed: host/build/signature is unsupported.");
     }
