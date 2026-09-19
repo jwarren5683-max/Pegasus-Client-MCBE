@@ -11,7 +11,8 @@ class Module;
 class ModuleManager;
 class Commands final {
 public:
-    // true always means consume locally, including invalid comma commands.
+    static constexpr char prefix = '.';
+    // true always means consume locally, including invalid local commands.
     bool execute(std::string_view text, ModuleManager& modules, std::vector<std::string>& replies);
     // The handler only schedules shutdown; it must not destroy modules inline.
     void set_eject_handler(std::function<bool()> handler);
