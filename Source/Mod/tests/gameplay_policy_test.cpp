@@ -12,6 +12,11 @@ int main(){
     utility::integration::server_safety::reset();
     startup_notice.disarm();
     check(std::strcmp(startup_notice_text,"[Loki] Loaded")==0,"startup notice text");
+    utility::integration::BedrockBuildInfo legacy_chat_build{},current_chat_build{};
+    legacy_chat_build.kind=utility::integration::BedrockBuildKind::release_12645;
+    current_chat_build.kind=utility::integration::BedrockBuildKind::release_12650;
+    check(local_chat_supported_build(legacy_chat_build),"legacy verified local-chat display remains enabled");
+    check(!local_chat_supported_build(current_chat_build),"26.50 unverified local-chat display must fail closed");
     int startup_calls{};
     int startup_player_token{};
     startup_notice.arm();
