@@ -3,13 +3,14 @@
 #include <Windows.h>
 
 namespace utility::modules {
-enum class GameplayFeature { esp, autotool, phase, airjump, deathposition, autosprint, chest_esp, triggerbot, jetpack, count };
+enum class GameplayFeature { esp, autotool, phase, airjump, deathposition, autosprint, chest_esp, triggerbot, jetpack, auto_leave, auto_bridge, count };
 class GameplayModule final : public Module {
 public:
     explicit GameplayModule(GameplayFeature feature) : feature_(feature) {}
     std::string_view name() const noexcept override;
     ModuleCategory category() const noexcept override;
     bool available() const noexcept override;
+    bool allowed_on_remote_server() const noexcept override;
     bool has_value() const noexcept override;
     std::string_view value_label() const noexcept override;
     std::string_view value_suffix() const noexcept override;
@@ -35,3 +36,4 @@ private:
     GameplayFeature feature_;
 };
 }
+

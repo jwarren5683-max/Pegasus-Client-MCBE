@@ -6,7 +6,33 @@ using namespace utility::modules;
 void check(bool ok,const char* text){if(!ok){std::fprintf(stderr,"FAIL: %s\n",text);std::exit(1);}}
 int eject_calls=0;
 void __fastcall mock_eject(void*,void*,void*,void*,void*,void*,void*,bool,void*){++eject_calls;}
+int leave_calls=0;
+void __fastcall mock_leave(void*){++leave_calls;}
 int main(){
+    utility::integration::server_safety::reset();
+    std::array<Byte,0xE00> leave_player{};
+    void* leave_table[15]{};
+    struct FakeClient { void** table; } leave_client{leave_table};
+    leave_table[0]=reinterpret_cast<void*>(&mock_leave);
+    leave_table[14]=reinterpret_cast<void*>(&mock_leave);
+    void* leave_client_pointer=&leave_client;
+    std::memcpy(leave_player.data()+0xD70,&leave_client_pointer,sizeof(leave_client_pointer));
+    image=reinterpret_cast<Byte*>(GetModuleHandleW(nullptr));
+    check(request_leave_game_async(leave_player.data())&&leave_calls==1,
+        "validated client vtable dispatches asynchronous leave exactly once");
+    check(!request_leave_game_async(nullptr)&&leave_calls==1,"invalid player fails closed without dispatch");
+    image=nullptr;
+    utility::integration::server_safety::observe_client_tick();
+    flags[static_cast<unsigned>(GameplayFeature::auto_leave)]=true;
+    flags[static_cast<unsigned>(GameplayFeature::triggerbot)]=true;
+    check(on(GameplayFeature::auto_leave)&&!on(GameplayFeature::triggerbot),
+        "remote sessions keep Auto Leave but block combat automation");
+    flags[static_cast<unsigned>(GameplayFeature::esp)]=true;
+    check(on(GameplayFeature::esp),"read-only ESP does not get suppressed by the remote combat policy");
+    flags[static_cast<unsigned>(GameplayFeature::esp)]=false;
+    flags[static_cast<unsigned>(GameplayFeature::auto_leave)]=false;
+    flags[static_cast<unsigned>(GameplayFeature::triggerbot)]=false;
+    utility::integration::server_safety::reset();
     flags[static_cast<unsigned>(GameplayFeature::jetpack)]=true;
     flags[static_cast<unsigned>(GameplayFeature::esp)]=true;
     utility::integration::navigation_owns_controls=true;
@@ -121,6 +147,19 @@ int main(){
     std::memcpy(live_actor.data()+0x18,&live_id,4);std::memcpy(reused_actor.data()+0x18,&reused_id,4);
     capture_esp(fake_player.data());
     check(frame.boxes.size()==1,"native capture retains live mob and excludes named tombstone and reused-generation ghost");
+    const std::uint32_t local_id=11;std::memcpy(fake_player.data()+0x18,&local_id,4);
+    utility::integration::game_context_detail::player=fake_player.data();
+    capture_esp_12650();
+    check(frame.boxes.size()==1&&frame.player==fake_player.data(),"26.50 RPM snapshot publishes live bounds without any foreign native actor-list call");
+    fake_client.fill(0);write_ptr(fake_player.data(),image+0xE8E1BC0);
+    write_ptr(fake_client.data()+0x1C0,fake_renderer.data());
+    std::memcpy(fake_client.data()+0x420,straight,sizeof(straight));
+    std::memcpy(fake_client.data()+0x4A0,&frustum,sizeof(frustum));
+    CameraSample new_sample{};utility::integration::BedrockBuildInfo new_build{};
+    new_build.kind=utility::integration::BedrockBuildKind::release_12650;
+    check(camera_sample(fake_player.data(),new_sample,new_build)&&new_sample.view[0]==1&&new_sample.origin.x==23,
+        "26.50 camera decodes shifted +420/+4A0/+1C0 fields and unchanged native origin");
+    utility::integration::game_context_detail::player=nullptr;
     image=nullptr;
 
     original_eject=&mock_eject;int local{},other{};local_state=&local;
@@ -135,7 +174,10 @@ int main(){
 
     static_assert(sizeof(GameString)==32);
     static_assert(sizeof(OptionalString)==40);
-    GameplayModule jump(GameplayFeature::airjump),phase(GameplayFeature::phase),esp(GameplayFeature::esp);
+    GameplayModule jump(GameplayFeature::airjump),phase(GameplayFeature::phase),esp(GameplayFeature::esp),leave(GameplayFeature::auto_leave);
+    esp_ready=false;check(!esp.available(),"unverified ESP remains unavailable");
+    esp_ready=true;check(esp.available(),"verified ESP readiness is independent of other feature flags");
+    esp_ready=false;
     pending_keys=0;
     jump.on_key_down(VK_SPACE); // key may already be released before the tick
     check((pending_keys.exchange(0)&16)!=0,"short airborne jump survives until tick");
@@ -164,6 +206,14 @@ int main(){
     utility::Module& entity_settings=esp;
     check(entity_settings.boolean_setting_count()==1&&entity_settings.boolean_setting_name(0)=="Players only","legacy ESP setting adapter");
     entity_settings.set_boolean_setting(0,false);check(!esp.boolean_setting(),"legacy ESP indexed toggle");
+    utility::Module& leave_settings=leave;
+    check(leave.name()=="Auto Leave"&&leave.category()==utility::ModuleCategory::combat&&
+        leave.allowed_on_remote_server(),"Auto Leave is a remote-capable Combat safety module");
+    check(leave_settings.has_value()&&leave_settings.value_label()=="Leave at"&&
+        leave_settings.value_suffix()==" hearts"&&leave_settings.value()==4.0F,
+        "Auto Leave exposes a four-heart default slider");
+    leave_settings.set_value(3.26F);check(leave_settings.value()==3.5F,"Auto Leave snaps to half hearts");
+    leave_settings.adjust_value(-1);check(leave_settings.value()==3.0F,"Auto Leave slider uses half-heart steps");
     using chest_esp::Kind;
     check(chest_esp::classify("minecraft:barrel")==Kind::barrel,"barrel classification");
     check(chest_esp::classify("minecraft:chest")==Kind::chest,"chest classification");
@@ -180,3 +230,4 @@ int main(){
     check(!chest_esp::belongs_to_chunk({-1,320,-17},-1,-2,-64,320,0x1800F0F),"height outside dimension rejected");
     std::puts("PASS: short input retention, one-shot consumption, diagonal input, native string ABI, ESP setting");
 }
+

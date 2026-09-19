@@ -248,9 +248,9 @@ void Renderer::click_at(int x, int y, bool right) noexcept {
                     settings_module_ = settings_module_ == hit.module ? nullptr : hit.module;
             }
             else hit.module->set_enabled(!hit.module->enabled());
-        } else if (hit.action == 2 && !right && hit.module->available()) {
+        } else if (hit.action == 2 && !right && hit.module->usable()) {
             hit.module->set_boolean_setting(hit.setting,!hit.module->boolean_setting(hit.setting));
-        } else if (!right && hit.module->available()) {
+        } else if (!right && hit.module->usable()) {
             slider_module_ = hit.module;
             slider_rect_ = hit.rect;
             SetCapture(overlay_window_);
@@ -314,8 +314,8 @@ void Renderer::paint_legacy(HDC device) noexcept {
         else {
             const auto* module = rows[i].module;
             text += widen(module->name());
-            text += !module->available() ? L"  N/A" : module->enabled() ? L"  ON" : L"  OFF";
-            if (!module->available()) color = RGB(111, 119, 129);
+            text += !module->usable() ? L"  N/A" : module->enabled() ? L"  ON" : L"  OFF";
+            if (!module->usable()) color = RGB(111, 119, 129);
         }
         line(text, 48 + i * 26, color);
     }
@@ -324,6 +324,8 @@ void Renderer::paint_legacy(HDC device) noexcept {
 
 void Renderer::paint(HWND window) noexcept {
  PAINTSTRUCT ps{};HDC target_device=BeginPaint(window,&ps);if(!target_device)return;
+ for (const auto& module : modules_->modules())
+     if (module->enabled() && !module->usable()) module->set_enabled(false);
  RECT client{};GetClientRect(window,&client);const int client_width=client.right,client_height=client.bottom;
  if(client_width<=0 || client_height<=0){EndPaint(window,&ps);return;}
  if(!back_buffer_device_ || back_buffer_width_!=client_width || back_buffer_height_!=client_height){
@@ -411,8 +413,8 @@ void Renderer::paint(HWND window) noexcept {
             RECT rect{x + 5, row_y, x + width - 5, row_y + 30};
             if (module->enabled()) fill_rectangle(device, rect, RGB(28, 58, 66));
             label(widen(module->name()), {x + 12, row_y, x + width - 42, row_y + 30},
-                !module->available() ? RGB(111, 119, 129) : module->enabled() ? RGB(86, 213, 234) : RGB(205, 211, 216));
-            label(module->available() ? (has_settings(module) ? (settings_module_ == module ? L"-" : L"+") : L"") : L"N/A",
+                !module->usable() ? RGB(111, 119, 129) : module->enabled() ? RGB(86, 213, 234) : RGB(205, 211, 216));
+            label(module->usable() ? (has_settings(module) ? (settings_module_ == module ? L"-" : L"+") : L"") : L"N/A",
                 {x + width - 42, row_y, x + width - 12, row_y + 30}, RGB(170, 185, 195), DT_RIGHT);
             if (rect.top >= 0 && rect.bottom <= viewport_height_) hits_.push_back({rect, module, 0});
             row_y += 30;

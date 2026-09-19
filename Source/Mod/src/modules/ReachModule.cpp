@@ -13,19 +13,37 @@
 #include <cstdint>
 #include <cstring>
 #include <cmath>
+#include <cstdio>
+#include <limits>
 #include <vector>
 
 namespace utility::modules {
 namespace {
 
-constexpr std::uint32_t supported_timestamp = 0x6A8378BA;
-constexpr std::uint32_t supported_image_size = 0x12888000;
-constexpr std::uintptr_t pick_range_rva = 0x2D329E0;
-constexpr std::uintptr_t max_pick_range_rva = 0x2D32A80;
-constexpr std::array<std::uintptr_t, 2> pick_slot_rvas{0xE81A0E0, 0xE81A180};
+struct ReachProfile final {
+    std::uint32_t timestamp;
+    std::uint32_t image_size;
+    std::uintptr_t pick_range_rva;
+    std::uintptr_t max_pick_range_rva;
+    std::array<std::uintptr_t, 2> pick_slot_rvas;
+    bool full_entity_support;
+    std::uintptr_t final_range_rva;
+    std::uintptr_t picker_return_rva;
+};
+
+constexpr ReachProfile release_12645{
+    0x6A8378BA, 0x12888000, 0x2D329E0, 0x2D32A80,
+    {0xE81A0E0, 0xE81A180}, true, 0x1B4B6F0, 0x4F63D3};
+
+// Exact 26.50 native picker, all three Survival reads and final HitResult
+// range validation were inspected together in the mapped executable.
+constexpr ReachProfile release_12650{
+    0x6AA482FD, 0x12C01000, 0x259FC40, 0x259FCE0,
+    {0xE8275B0, 0xE827650}, true, 0xEC3D80, 0x4BD1A3};
 constexpr std::size_t max_patch_size = 14;
 constexpr float minimum_distance = 3.0F;
-constexpr float maximum_distance = 7.0F;
+// Keep the familiar 7-block default, but allow an extended opt-in range.
+constexpr float maximum_distance = 10.0F;
 constexpr float distance_step = 0.5F;
 
 constexpr std::array<std::byte, 16> expected_pick_prologue{
@@ -45,14 +63,25 @@ constexpr std::array<std::byte, max_patch_size> expected_max_prologue{
 std::atomic<ReachModule*> active_module{};
 std::atomic_uint32_t active_calls{};
 thread_local float selected_block_range = 5.0F;
+thread_local float selected_vanilla_range = 5.0F;
+// On 26.50 the verified LocalPlayer tick owns the shared player context.
+// Range queries also run for server players: never publish those as LocalPlayer.
+bool local_range_query(void* game_mode, void* local_player) noexcept {
+    if (!game_mode || !local_player) return false;
+    void* candidate{};
+    SIZE_T read{};
+    return ReadProcessMemory(GetCurrentProcess(), static_cast<const std::byte*>(game_mode) + 8,
+        &candidate, sizeof(candidate), &read) && read == sizeof(candidate) && candidate == local_player;
+}
 struct PickRanges { float ray, block; };
 PickRanges pick_ranges(float vanilla, bool entity_on, float entity, bool block_on, float block) noexcept {
     const float block_limit=block_on?block:vanilla;
     return {(std::max)((std::max)(vanilla,block_limit),entity_on?entity:0.0F),block_limit};
 }
-float final_range(int type, float native_range, float block, bool entity_on, float entity) noexcept {
+float final_range(int type, float native_range, float block, bool entity_on, float entity,float vanilla=std::numeric_limits<float>::max()) noexcept {
     if(type==0)return block;
     if(type==1&&entity_on)return entity;
+    if(type==1)return (std::min)(native_range,vanilla);
     return native_range;
 }
 
@@ -145,16 +174,22 @@ constexpr std::array<EntityRangeRead, 3> entity_range_reads{{
     {0x4F5E95, 8, {0xF3,0x0F,0x10,0x3D,0x9F,0xF1,0x10,0x0E}},
     {0x4F5FDC, 7, {0x0F,0x2E,0x1D,0x59,0xF0,0x10,0x0E}},
 }};
+constexpr std::array<EntityRangeRead,3> entity_range_reads_12650{{
+    {0x4BCC5C,7,{0x0F,0x2E,0x3D,0x49,0x56,0x14,0x0E}},
+    {0x4BCC65,8,{0xF3,0x0F,0x10,0x3D,0x3F,0x56,0x14,0x0E}},
+    {0x4BCDAC,7,{0x0F,0x2E,0x1D,0xF9,0x54,0x14,0x0E}}
+}};
 
 class EntityRangeStorage final {
 public:
-    bool install(std::byte* image) noexcept {
+    bool install(std::byte* image,bool native_12650=false) noexcept {
         if (installed_) return image == base_;
-        for (const auto& site : entity_range_reads) {
+        sites_=native_12650?entity_range_reads_12650:entity_range_reads;
+        for (const auto& site : sites_) {
             if (std::memcmp(image + site.rva, site.bytes.data(), site.size)) return false;
         }
         if (value_ == nullptr) {
-            const auto origin = reinterpret_cast<std::uintptr_t>(image + entity_range_reads[0].rva) & ~std::uintptr_t{0xFFFF};
+            const auto origin = reinterpret_cast<std::uintptr_t>(image + sites_[0].rva) & ~std::uintptr_t{0xFFFF};
             // A private aligned float within RIP-relative addressing distance.
             for (std::uintptr_t delta = 0x10000; delta < 0x70000000 && !value_; delta += 0x10000) {
                 for (const auto candidate : {origin + delta, origin > delta ? origin - delta : std::uintptr_t{0}}) {
@@ -171,8 +206,8 @@ public:
         if (!value_) return false;
         set(3.0F);
         base_ = image;
-        for (std::size_t i = 0; i < entity_range_reads.size(); ++i) {
-            const auto& site = entity_range_reads[i];
+        for (std::size_t i = 0; i < sites_.size(); ++i) {
+            const auto& site = sites_[i];
             const auto displacement = reinterpret_cast<std::intptr_t>(value_) -
                 reinterpret_cast<std::intptr_t>(image + site.rva + site.size);
             if (displacement < INT32_MIN || displacement > INT32_MAX) return false;
@@ -204,17 +239,17 @@ private:
     bool rewrite(bool redirect) noexcept {
         SuspendedThreads suspended;
         if (!suspended.valid()) return false;
-        for (std::size_t i = 0; i < entity_range_reads.size(); ++i) {
-            const auto& site = entity_range_reads[i];
+        for (std::size_t i = 0; i < sites_.size(); ++i) {
+            const auto& site = sites_[i];
             if (!suspended.outside(base_ + site.rva, site.size) ||
                 std::memcmp(base_ + site.rva, (redirect ? site.bytes : redirected_[i]).data(), site.size)) return false;
         }
         // All three complete instructions are in the same executable page.
-        auto* page = base_ + (entity_range_reads[0].rva & ~std::uintptr_t{4095});
+        auto* page = base_ + (sites_[0].rva & ~std::uintptr_t{4095});
         DWORD protection{};
         if (!VirtualProtect(page, 4096, PAGE_EXECUTE_READWRITE, &protection)) return false;
-        for (std::size_t i = 0; i < entity_range_reads.size(); ++i) {
-            const auto& site = entity_range_reads[i];
+        for (std::size_t i = 0; i < sites_.size(); ++i) {
+            const auto& site = sites_[i];
             std::memcpy(base_ + site.rva, (redirect ? redirected_[i] : site.bytes).data(), site.size);
         }
         FlushInstructionCache(GetCurrentProcess(), page, 4096);
@@ -225,6 +260,7 @@ private:
     std::byte* base_{};
     LONG* value_{};
     bool installed_{};
+    std::array<EntityRangeRead,3> sites_=entity_range_reads;
     std::array<std::array<unsigned char, 8>, 3> redirected_{};
 };
 
@@ -241,13 +277,13 @@ void write_absolute_jump(std::byte* destination, const void* target) noexcept {
     std::memcpy(destination + 6, &value, sizeof(value));
 }
 
-[[nodiscard]] bool supported_image(HMODULE image) noexcept {
+[[nodiscard]] const ReachProfile* reach_profile(HMODULE image) noexcept {
     if (image == nullptr) {
-        return false;
+        return nullptr;
     }
     wchar_t path[MAX_PATH]{};
     if (GetModuleFileNameW(image, path, MAX_PATH) == 0) {
-        return false;
+        return nullptr;
     }
     const wchar_t* filename = path;
     for (const wchar_t* cursor = path; *cursor != L'\0'; ++cursor) {
@@ -256,17 +292,20 @@ void write_absolute_jump(std::byte* destination, const void* target) noexcept {
         }
     }
     if (_wcsicmp(filename, L"Minecraft.Windows.exe") != 0) {
-        return false;
+        return nullptr;
     }
     const auto* base = reinterpret_cast<const std::byte*>(image);
     const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
     if (dos->e_magic != IMAGE_DOS_SIGNATURE) {
-        return false;
+        return nullptr;
     }
     const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
-    return nt->Signature == IMAGE_NT_SIGNATURE &&
-        nt->FileHeader.TimeDateStamp == supported_timestamp &&
-        nt->OptionalHeader.SizeOfImage == supported_image_size;
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return nullptr;
+    for (const auto* profile : {&release_12645, &release_12650}) {
+        if (nt->FileHeader.TimeDateStamp == profile->timestamp &&
+            nt->OptionalHeader.SizeOfImage == profile->image_size) return profile;
+    }
+    return nullptr;
 }
 
 bool exchange_slot(void** slot, void* value) noexcept {
@@ -281,6 +320,9 @@ bool exchange_slot(void** slot, void* value) noexcept {
 }
 
 } // namespace
+
+std::size_t reach_implementation_size() noexcept { return sizeof(ReachModule); }
+ReachModule::ReachModule() = default;
 
 ReachModule::~ReachModule() {
     active_.store(false, std::memory_order_release);
@@ -316,15 +358,17 @@ void ReachModule::set_value(float distance) noexcept {
 
 void ReachModule::on_register(EventBus&) {
     if (install_hooks()) {
-        Logger::instance().info(
-            "Reach hooks installed for Minecraft 1.26.4501.0; block selection, Survival entity selection, and singleplayer validation use the live slider.");
+        Logger::instance().info(release_12650_
+            ? "Reach hooks installed for Minecraft 1.26.5101.0; verified ray, Survival cap and final crosshair distance gates connected. Local interaction maximum includes both independent sliders; remote servers may reject extended interactions."
+            : "Reach hooks installed for Minecraft 1.26.4501.0; block selection, Survival entity selection, and singleplayer validation use the live slider.");
     } else {
         Logger::instance().info(
-            "Reach unavailable: exact Minecraft 1.26.4501.0 range signatures were not present; no memory was changed.");
+            "Reach unavailable: exact supported range signatures were not present; no memory was changed.");
     }
 }
 
 void ReachModule::on_enable() {
+    ray_reported_=false;final_reported_=false;
     entity_range_storage().set(value());
     active_.store(true, std::memory_order_release);
     Logger::instance().info("Reach enabled; distance is controlled by the menu slider.");
@@ -339,33 +383,43 @@ void ReachModule::on_disable() {
 float __fastcall ReachModule::pick_range_hook(
     void* game_mode, const int* input_mode, bool include_liquids) noexcept {
     const ActiveCall call;
-    integration::observe_game_mode(game_mode);
     ReachModule* module = active_module.load(std::memory_order_acquire);
     if (module == nullptr || module->original_pick_range_ == nullptr) {
         return 3.0F;
     }
     const float vanilla = module->original_pick_range_(game_mode, input_mode, include_liquids);
+    if (module->release_12650_) {
+        if (!local_range_query(game_mode, integration::current_player())) return vanilla;
+    } else {
+        integration::observe_game_mode(game_mode);
+    }
     const auto ranges=pick_ranges(vanilla,module->active_.load(),module->value(),module->block_active_.load(),module->block_value());
     selected_block_range=ranges.block;
+    selected_vanilla_range=vanilla;
+    if((module->active_.load()||module->block_active_.load())&&!module->ray_reported_.exchange(true)) {
+        char message[180]{};std::snprintf(message,sizeof(message),"Reach: native pick callback received slider ranges; vanilla=%.1f, ray=%.1f, blocks=%.1f.",vanilla,ranges.ray,ranges.block);
+        Logger::instance().info(message);
+    }
     return ranges.ray;
 }
 
 float __fastcall ReachModule::max_pick_range_hook(void* game_mode) noexcept {
     const ActiveCall call;
-    integration::observe_game_mode(game_mode);
     ReachModule* module = active_module.load(std::memory_order_acquire);
     if (module == nullptr || module->original_max_pick_range_ == nullptr) {
         return 6.7F;
     }
     const float vanilla = module->original_max_pick_range_(game_mode);
-    if (!module->block_active_.load(std::memory_order_acquire)) {
-        return vanilla;
+    if (module->release_12650_) {
+        if (!local_range_query(game_mode, integration::current_player())) return vanilla;
+    } else {
+        integration::observe_game_mode(game_mode);
     }
-    return (std::max)(vanilla, module->block_value());
+    return pick_ranges(vanilla,module->active_.load(),module->value(),module->block_active_.load(),module->block_value()).ray;
 }
 
 void ReachModule::set_block_value(float distance) noexcept {
-    if (std::isfinite(distance)) block_distance_.store(std::clamp(std::round(distance * 2.0F) / 2.0F, 3.0F, 7.0F));
+    if (std::isfinite(distance)) block_distance_.store(std::clamp(std::round(distance * 2.0F) / 2.0F, 3.0F, maximum_distance));
 }
 
 void __fastcall ReachModule::final_range_hook(void* hit, void* player, float range, bool adjust) noexcept {
@@ -375,12 +429,18 @@ void __fastcall ReachModule::final_range_hook(void* hit, void* player, float ran
     const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
     // Only the crosshair picker receives the combined ray. Other callers retain
     // their own native ranges. A longer entity ray must not extend block reach.
-    if (reinterpret_cast<std::uintptr_t>(_ReturnAddress()) == base + 0x4F63D3 && hit) {
+    const bool picker=reinterpret_cast<std::uintptr_t>(_ReturnAddress())==base+module->picker_return_rva_;
+    if (picker && hit && (!module->release_12650_ || player == integration::current_player()) &&
+        (module->active_.load()||module->block_active_.load())) {
         const int type = *reinterpret_cast<const int*>(static_cast<const std::byte*>(hit) + 0x18);
-        range=final_range(type,range,selected_block_range,module->active_.load(),module->value());
+        range=final_range(type,range,selected_block_range,module->active_.load(),module->value(),selected_vanilla_range);
+        if((module->active_.load()||module->block_active_.load())&&!module->final_reported_.exchange(true)) {
+            char message[180]{};std::snprintf(message,sizeof(message),"Reach: native final crosshair gate reached; hit type=%d, selected limit=%.1f.",type,range);
+            Logger::instance().info(message);
+        }
     }
     module->original_final_range_(hit, player, range, adjust);
-    if (reinterpret_cast<std::uintptr_t>(_ReturnAddress()) == base + 0x4F63D3)
+    if (picker && !module->release_12650_)
         integration::observe_crosshair(player, hit);
 }
 
@@ -389,18 +449,28 @@ bool ReachModule::install_hooks() noexcept {
         return true;
     }
     HMODULE image = GetModuleHandleW(nullptr);
-    if (!supported_image(image)) {
+    const auto* profile = reach_profile(image);
+    if (profile == nullptr) {
         return false;
     }
     auto* base = reinterpret_cast<std::byte*>(image);
-    auto* pick_target = base + pick_range_rva;
-    auto* max_target = base + max_pick_range_rva;
+    auto* pick_target = base + profile->pick_range_rva;
+    auto* max_target = base + profile->max_pick_range_rva;
+    if(profile==&release_12650) {
+        // Exact native crosshair caller: hit in RCX, player in RDX, range in
+        // XMM2, adjustment in R9. The shared float constant is never modified.
+        const unsigned char caller[]{0x48,0x89,0xC1,0x4C,0x89,0xFA,0x0F,0x28,0xD6,0x41,0x89,0xD9,0xE8,0xDD,0x6B,0xA0,0x00};
+        const unsigned char picker_entry[]{0x55,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x56,0x57,0x53,0x48,0x81,0xEC,0x58,0x06,0x00,0x00};
+        if(std::memcmp(base+0x4BD192,caller,sizeof(caller))||std::memcmp(base+0x4BA840,picker_entry,sizeof(picker_entry)))return false;
+        for(const auto& site:entity_range_reads_12650)if(std::memcmp(base+site.rva,site.bytes.data(),site.size))return false;
+    }
+    picker_return_rva_=profile->picker_return_rva;
     if (std::memcmp(pick_target, expected_pick_prologue.data(), expected_pick_prologue.size()) != 0 ||
         std::memcmp(max_target, expected_max_prologue.data(), expected_max_prologue.size()) != 0) {
         return false;
     }
-    for (std::size_t index = 0; index < pick_slot_rvas.size(); ++index) {
-        pick_slots_[index] = reinterpret_cast<void**>(base + pick_slot_rvas[index]);
+    for (std::size_t index = 0; index < profile->pick_slot_rvas.size(); ++index) {
+        pick_slots_[index] = reinterpret_cast<void**>(base + profile->pick_slot_rvas[index]);
         if (*pick_slots_[index] != pick_target) {
             return false;
         }
@@ -415,22 +485,26 @@ bool ReachModule::install_hooks() noexcept {
     write_absolute_jump(trampoline + max_patch_size, max_target + max_patch_size);
     FlushInstructionCache(GetCurrentProcess(), trampoline, max_patch_size + 14);
 
-    const unsigned char final_expected[]{0x41,0x56,0x56,0x57,0x53,0x48,0x81,0xEC,0x88,0,0,0,0x44,0x0F,0x29,0x5C,0x24,0x70};
-    auto* final_target = base + 0x1B4B6F0;
-    if (std::memcmp(final_target, final_expected, sizeof(final_expected))) {
-        VirtualFree(trampoline, 0, MEM_RELEASE); return false;
+    if (profile->full_entity_support) {
+        const unsigned char final_expected[]{0x41,0x56,0x56,0x57,0x53,0x48,0x81,0xEC,0x88,0,0,0,0x44,0x0F,0x29,0x5C,0x24,0x70};
+        auto* final_target = base + profile->final_range_rva;
+        if (std::memcmp(final_target, final_expected, sizeof(final_expected))) {
+            VirtualFree(trampoline, 0, MEM_RELEASE); return false;
+        }
+        auto* final_trampoline = static_cast<std::byte*>(VirtualAlloc(nullptr, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+        if (!final_trampoline) { VirtualFree(trampoline, 0, MEM_RELEASE); return false; }
+        std::memcpy(final_original_, final_target, 18);
+        std::memcpy(final_trampoline, final_target, 18);
+        write_absolute_jump(final_trampoline + 18, final_target + 18);
+        FlushInstructionCache(GetCurrentProcess(), final_trampoline, 32);
+        original_final_range_ = reinterpret_cast<FinalRangeFunction>(final_trampoline);
+        final_target_ = final_target;
     }
-    auto* final_trampoline = static_cast<std::byte*>(VirtualAlloc(nullptr, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
-    if (!final_trampoline) { VirtualFree(trampoline, 0, MEM_RELEASE); return false; }
-    std::memcpy(final_original_, final_target, 18);
-    std::memcpy(final_trampoline, final_target, 18);
-    write_absolute_jump(final_trampoline + 18, final_target + 18);
-    FlushInstructionCache(GetCurrentProcess(), final_trampoline, 32);
-    original_final_range_ = reinterpret_cast<FinalRangeFunction>(final_trampoline);
-    final_target_ = final_target;
 
     original_pick_range_ = reinterpret_cast<PickRangeFunction>(pick_target);
     original_max_pick_range_ = reinterpret_cast<MaxPickRangeFunction>(trampoline);
+    // Publish the ownership policy before any callback becomes callable.
+    release_12650_ = profile == &release_12650;
     active_module.store(this, std::memory_order_release);
 
     if (!exchange_slot(pick_slots_[0], reinterpret_cast<void*>(&pick_range_hook)) ||
@@ -468,11 +542,14 @@ bool ReachModule::install_hooks() noexcept {
 
     max_target_ = max_target;
     max_trampoline_ = trampoline;
+    full_entity_support_ = profile->full_entity_support;
+    release_12650_ = profile == &release_12650;
     hooks_installed_ = true;
-    if (!entity_range_storage().install(base)) {
+    if (full_entity_support_ && !entity_range_storage().install(base,release_12650_)) {
         uninstall_hooks();
         return false;
     }
+    if (!full_entity_support_) return true;
     bool final_installed = false;
     {
         SuspendedThreads suspended;
@@ -487,7 +564,8 @@ bool ReachModule::install_hooks() noexcept {
         }
     }
     if (!final_installed) { uninstall_hooks(); return false; }
-    integration::game_context_detail::picker_ready=true;
+    // Keep old Trigger Bot/player-layout integration gated on 26.50.
+    integration::game_context_detail::picker_ready = !release_12650_;
     return true;
 }
 
@@ -498,7 +576,7 @@ void ReachModule::uninstall_hooks() noexcept {
         return;
     }
     active_.store(false, std::memory_order_release);
-    if (!entity_range_storage().uninstall()) return;
+    if (full_entity_support_ && !entity_range_storage().uninstall()) return;
     auto* pick_target = reinterpret_cast<void*>(original_pick_range_);
     (void)exchange_slot(pick_slots_[0], pick_target);
     (void)exchange_slot(pick_slots_[1], pick_target);
@@ -535,7 +613,10 @@ void ReachModule::uninstall_hooks() noexcept {
     VirtualFree(max_trampoline_, 0, MEM_RELEASE);
     max_trampoline_ = nullptr;
     max_target_ = nullptr;
+    full_entity_support_ = false;
+    release_12650_ = false;
     hooks_installed_ = false;
 }
 
 } // namespace utility::modules
+

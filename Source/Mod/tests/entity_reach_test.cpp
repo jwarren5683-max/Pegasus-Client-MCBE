@@ -4,11 +4,43 @@
 #include <cstdlib>
 
 using namespace utility::modules;
+namespace integration = utility::integration;
 void check(bool ok, const char* message) {
     if (!ok) { std::fprintf(stderr, "FAIL: %s\n", message); std::exit(1); }
 }
 
 int main() {
+    struct MockMode { void* table; void* player; } mode{};
+    int local{}, server{};
+    mode.player=&local;
+    check(local_range_query(&mode,&local), "local range query accepted");
+    check(!local_range_query(&mode,&server), "other player range left vanilla");
+    check(!local_range_query(&mode,nullptr), "missing local player left vanilla");
+    check(!local_range_query(nullptr,&local), "null game mode rejected");
+    check(!local_range_query(reinterpret_cast<void*>(1),&local), "unreadable game mode safely rejected");
+    integration::game_context_detail::player.store(&local);
+    mode.player=&server;
+    check(!local_range_query(&mode,integration::current_player()) &&
+        integration::current_player()==&local, "server query cannot replace ESP local context");
+    integration::game_context_detail::player.store(nullptr);
+    check(release_12650.timestamp == 0x6AA482FD && release_12650.image_size == 0x12C01000,
+        "26.50 Reach profile matches the installed executable");
+    check(release_12650.pick_range_rva == 0x259FC40 &&
+        release_12650.max_pick_range_rva == 0x259FCE0,
+        "26.50 verified Reach function RVAs retained");
+    check(release_12650.pick_slot_rvas[0] == 0xE8275B0 &&
+        release_12650.pick_slot_rvas[1] == 0xE827650 && release_12650.full_entity_support &&
+        release_12650.final_range_rva==0xEC3D80&&release_12650.picker_return_rva==0x4BD1A3,
+        "26.50 verified vtable, Survival and final picker sites connected");
+    ReachModule entity;
+    BlockReachModule block(entity);
+    check(entity.maximum_value() == 10.0F, "entity reach exposes the extended maximum");
+    check(block.maximum_value() == 10.0F, "block reach exposes the extended maximum");
+    entity.set_value(12.0F);
+    block.set_value(12.0F);
+    check(entity.value() == 10.0F, "entity reach clamps to the extended maximum");
+    check(block.value() == 10.0F, "block reach clamps to the extended maximum");
+
     // Extending one reach must not extend the other; reducing block reach must
     // still leave a long enough ray for normal Creative entity selection.
     for(float vanilla : {5.0F,7.0F}) {
@@ -18,6 +50,8 @@ int main() {
         r=pick_ranges(vanilla,false,7,true,3);
         check(r.ray==vanilla && r.block==3,"short block range preserves vanilla entity query");
         check(final_range(1,r.ray,r.block,false,7)==vanilla,"disabled entity module leaves native range");
+        r=pick_ranges(vanilla,false,7,true,10);
+        check(r.ray==10&&final_range(1,r.ray,r.block,false,7,vanilla)==vanilla,"long block ray does not extend disabled entity reach");
         r=pick_ranges(vanilla,true,3,true,7);
         check(r.ray==7 && final_range(1,r.ray,r.block,true,3)==3,"long blocks do not extend configured entities");
         check(final_range(3,9,r.block,true,3)==9,"unrelated hit types retain native range");
@@ -25,25 +59,27 @@ int main() {
         check(r.ray==vanilla && r.block==vanilla,"disabling both restores vanilla ranges");
     }
 
+    for(bool native: {false,true}) {
+    const auto& reads=native?entity_range_reads_12650:entity_range_reads;
     auto* fixture = static_cast<std::byte*>(VirtualAlloc(nullptr, 0x500000,
         MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
     check(fixture != nullptr, "fixture allocation");
-    for (const auto& site : entity_range_reads)
+    for (const auto& site : reads)
         std::memcpy(fixture + site.rva, site.bytes.data(), site.size);
     EntityRangeStorage patch;
     // A mismatched build must not partially install any of the three reads.
-    fixture[entity_range_reads[2].rva] = std::byte{0x90};
-    check(!patch.install(fixture), "reject mismatched signature");
-    check(!std::memcmp(fixture + entity_range_reads[0].rva,
-        entity_range_reads[0].bytes.data(), entity_range_reads[0].size), "no partial writes");
-    fixture[entity_range_reads[2].rva] = std::byte{0x0F};
-    check(patch.install(fixture), "install all entity range reads");
+    fixture[reads[2].rva] = std::byte{0x90};
+    check(!patch.install(fixture,native), "reject mismatched signature");
+    check(!std::memcmp(fixture + reads[0].rva,
+        reads[0].bytes.data(), reads[0].size), "no partial writes");
+    fixture[reads[2].rva] = std::byte{0x0F};
+    check(patch.install(fixture,native), "install all entity range reads");
 
     // Execute each exact native SSE instruction in a tiny ABI-safe wrapper.
     // This checks both comparison gates and the clamp, including the 7/8-byte
     // instruction-length distinction when relocating RIP-relative operands.
     auto prepare = [&](std::size_t index) {
-        const auto& site = entity_range_reads[index];
+        const auto& site = reads[index];
         auto* code = reinterpret_cast<unsigned char*>(fixture + index * 128);
         const unsigned char prefix[]{0x48,0x83,0xEC,0x18,0x0F,0x11,0x3C,0x24,
             0x0F,0x28,0xF8,0x0F,0x28,0xD8}; // save xmm7; xmm7=xmm0; xmm3=xmm0
@@ -68,7 +104,7 @@ int main() {
     auto first = reinterpret_cast<bool(*)(float)>(prepare(0));
     auto clamp = reinterpret_cast<float(*)(float)>(prepare(1));
     auto final = reinterpret_cast<bool(*)(float)>(prepare(2));
-    for (float distance : {3.0F, 3.5F, 5.0F, 7.0F, 3.0F}) {
+    for (float distance : {3.0F, 3.5F, 5.0F, 7.0F, 10.0F, 3.0F}) {
         patch.set(distance);
         check(first(distance) && final(distance), "inclusive entity reach boundary");
         check(!first(distance + 0.01F) && !final(distance + 0.01F), "reject beyond configured range");
@@ -77,9 +113,11 @@ int main() {
     patch.set(7.0F);
     check(patch.uninstall(), "uninstall succeeds");
     check(clamp(0) == 3.0F, "disable restores vanilla backing value");
-    for (const auto& site : entity_range_reads)
+    for (const auto& site : reads)
         check(!std::memcmp(fixture + site.rva, site.bytes.data(), site.size), "restore exact native instruction");
-    check(patch.install(fixture) && patch.uninstall(), "repeat installation and restoration");
+    check(patch.install(fixture,native) && patch.uninstall(), "repeat installation and restoration");
     VirtualFree(fixture, 0, MEM_RELEASE);
+    }
     std::puts("PASS: native Survival entity cap, clamp, final rejection, slider distances, signature rejection, restoration");
 }
+

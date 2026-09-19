@@ -12,10 +12,7 @@ bool allow_input(){return true;}
 bool deny_input(){return false;}
 void* __fastcall resolve(void* hit){check(hit==fake_hit,"Resolver receives current HitResult");++resolutions;return fake_actor;}
 bool __fastcall alive(void* actor){check(actor==fake_actor,"Health queried for target");return living;}
-bool __fastcall attack(void* mode,void* actor,const Vec3* position){
-    check(mode==fake_mode&&actor==fake_actor,"Native attack receives selected actor and local GameMode");
-    check(position->x==1&&position->y==2&&position->z==3,"Native hit position preserved");++attacks;return true;
-}
+bool attack(){++attacks;return true;}
 template<class T> void field(Byte* memory,std::size_t offset,T value){std::memcpy(memory+offset,&value,sizeof(value));}
 void commit(std::uintptr_t rva){check(VirtualAlloc(image+(rva&~std::uintptr_t{4095}),8192,MEM_COMMIT,PAGE_EXECUTE_READWRITE)!=nullptr,"Commit synthetic native page");}
 void code(std::uintptr_t rva,std::initializer_list<Byte> bytes){commit(rva);std::memcpy(image+rva,bytes.begin(),bytes.size());}
@@ -25,41 +22,44 @@ void native_test(){
     code(0xD72560,{0x48,0x8B,0x81,0xE8,0x01,0,0,0xC3});
     code(0x47E8B00,{0x48,0x83,0xEC,0x48,0x48,0x8D,0x51,0x38,0x48,0x8D,0x4C,0x24,0x28});
     code(0x26EFD60,{0x48,0x83,0xEC,0x28,0x80,0xB9,0x69,0x02,0,0,0});
-    code(0x2D2D020,{0x4D,0x89,0xC1,0x41,0xB0,0x01,0xE9});
-    code(0x2D33510,{0x4D,0x89,0xC1,0x80,0xB9,0xC8,0,0,0,0x01});
     commit(0xE81A090);commit(0xE79E800);
-    field(image,0xE81A090+0x78,image+0x2D2D020);field(image,0xE81A130+0x78,image+0x2D33510);
     check(verify_triggerbot(),"Exact native signatures accepted");image[0xD72560]^=1;
     check(!verify_triggerbot(),"Changed native signature disables integration");image[0xD72560]^=1;
     jump(0x47E8B00,reinterpret_cast<void*>(&resolve));jump(0x26EFD60,reinterpret_cast<void*>(&alive));
-    jump(0x2D2D020,reinterpret_cast<void*>(&attack));jump(0x2D33510,reinterpret_cast<void*>(&attack));
     FlushInstructionCache(GetCurrentProcess(),nullptr,0);
     field(fake_player,0,image+0xE820EC0);field(fake_player,0x1D8,fake_level);field(fake_player,0xAA0,fake_mode);
     field(fake_player,0x1C8,fake_level);field(fake_actor,0x1C8,fake_level);
     field(fake_player,0x10,fake_level);field(fake_actor,0x10,fake_level);field(fake_actor,0x18,7U);
     field(fake_level,0,image+0xE79E800);field(image,0xE79E800+0xA78,image+0xD72560);field(fake_level,0x1E8,fake_hit);
-    field(fake_mode,0,image+0xE81A090);field(fake_mode,8,fake_player);field(fake_hit,0x18,1);field(fake_hit,0x2C,Vec3{1,2,3});
+    field(fake_mode,0,image+0xE81A090);field(fake_mode,8,fake_player);
+    field(fake_hit,0x18,1);field(fake_hit,0x2C,Vec3{1,2,3});
     std::memcpy(fake_actor+0x240,"minecraft:pig",13);field(fake_actor,0x250,std::size_t{13});field(fake_actor,0x258,std::size_t{15});
     trigger_ready=true;trigger_targets=triggerbot::all_targets;flags[static_cast<unsigned>(GameplayFeature::triggerbot)]=true;
     utility::integration::game_context_detail::picker_ready=true;++trigger_revision;
     const auto started=esp_time();
-    for(int i=0;i<50;++i){utility::integration::observe_crosshair(fake_player,fake_hit);triggerbot_tick(fake_player,true,allow_input);Sleep(10);}
+    for(int i=0;i<50;++i){utility::integration::observe_crosshair(fake_player,fake_hit);triggerbot_tick(fake_player,true,allow_input,attack);Sleep(10);}
     const auto elapsed=esp_time()-started;
-    std::printf("Native calls: attacks=%d resolutions=%d elapsed=%.3fs\n",attacks,resolutions,elapsed);
-    check(attacks>=2&&attacks<=static_cast<int>(std::ceil(elapsed*15)),"Native adapter invokes bounded repeated attacks without desktop input");
+    std::printf("Local input calls: attacks=%d resolutions=%d elapsed=%.3fs\n",attacks,resolutions,elapsed);
+    check(attacks>=2&&attacks<=static_cast<int>(std::ceil(elapsed*15)),"Local input adapter invokes bounded repeated attacks");
     const auto before=attacks;
-    trigger_targets=0;triggerbot_tick(fake_player,true,allow_input);check(attacks==before,"Both filters off prevents attack");
-    trigger_targets=3;living=false;triggerbot_tick(fake_player,true,allow_input);check(attacks==before,"Dead target prevents attack");living=true;
+    trigger_targets=0;triggerbot_tick(fake_player,true,allow_input,attack);check(attacks==before,"Both filters off prevents attack");
+    trigger_targets=3;living=false;triggerbot_tick(fake_player,true,allow_input,attack);check(attacks==before,"Dead target prevents attack");living=true;
     const auto before_resolve=resolutions;
-    field(fake_hit,0x18,0);triggerbot_tick(fake_player,true,allow_input);check(resolutions==before_resolve,"Block hit is never resolved/attacked");field(fake_hit,0x18,1);
+    field(fake_hit,0x18,0);triggerbot_tick(fake_player,true,allow_input,attack);check(resolutions==before_resolve,"Block hit is never resolved/attacked");field(fake_hit,0x18,1);
     utility::integration::game_context_detail::crosshair_time=GetTickCount64()-101;
-    triggerbot_tick(fake_player,true,allow_input);check(resolutions==before_resolve,"Stale picker result rejected");
+    triggerbot_tick(fake_player,true,allow_input,attack);check(resolutions==before_resolve,"Stale picker result rejected");
     utility::integration::observe_crosshair(fake_player,fake_hit);
-    triggerbot_tick(fake_player,false,allow_input);check(attacks==before,"Menu/focus/dead-player control gate");
-    for(int i=0;i<30;++i){utility::integration::observe_crosshair(fake_player,fake_hit);triggerbot_tick(fake_player,true,deny_input);Sleep(10);}
+    triggerbot_tick(fake_player,false,allow_input,attack);check(attacks==before,"Menu/focus/dead-player control gate");
+    for(int i=0;i<30;++i){utility::integration::observe_crosshair(fake_player,fake_hit);triggerbot_tick(fake_player,true,deny_input,attack);Sleep(10);}
     check(attacks==before,"Focus loss immediately before attack cancels it");
+    utility::integration::server_safety::reset();
+    utility::integration::server_safety::observe_client_tick();
+    utility::integration::observe_crosshair(fake_player,fake_hit);
+    triggerbot_tick(fake_player,true,allow_input,attack);
+    check(attacks==before,"Remote session prevents trigger input");
+    utility::integration::server_safety::reset();
     flags[static_cast<unsigned>(GameplayFeature::triggerbot)]=false;
-    triggerbot_tick(fake_player,true,allow_input);check(attacks==before,"Disable stops attacks");
+    triggerbot_tick(fake_player,true,allow_input,attack);check(attacks==before,"Disable stops attacks");
     utility::integration::clear_game_context();utility::integration::game_context_detail::picker_ready=false;
     VirtualFree(image,0,MEM_RELEASE);image=nullptr;
 }
@@ -114,5 +114,5 @@ int main() {
         check(!cadence.update(70.02,{1,9,4},true),"Dimension change resets");
     }
     native_test();
-    std::puts("Triggerbot settings, target filters and 32 minutes of simulated attack timing passed.");
+    std::puts("Triggerbot settings, remote safety, target filters and 32 minutes of simulated attack timing passed.");
 }

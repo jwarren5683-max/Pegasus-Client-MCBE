@@ -6,13 +6,18 @@
 
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 
 namespace utility::modules {
 
+// Compared by callers compiled in other source files before allocation.
+[[nodiscard]] std::size_t reach_implementation_size() noexcept;
+
 class ReachModule final : public Module {
 public:
+    ReachModule();
     ~ReachModule() override;
-    void set_block_enabled(bool enabled) noexcept { block_active_.store(enabled); }
+    void set_block_enabled(bool enabled) noexcept { block_active_.store(enabled);ray_reported_=false;final_reported_=false; }
     float block_value() const noexcept { return block_distance_.load(); }
     void set_block_value(float distance) noexcept;
     [[nodiscard]] std::string_view name() const noexcept override;
@@ -52,6 +57,10 @@ private:
     void* max_target_{};
     void* max_trampoline_{};
     unsigned char max_original_[14]{};
+    bool full_entity_support_{};
+    bool release_12650_{};
+    std::uintptr_t picker_return_rva_{};
+    std::atomic_bool ray_reported_{false},final_reported_{false};
     bool hooks_installed_{};
 };
 
@@ -64,7 +73,7 @@ public:
     bool has_value() const noexcept override { return true; }
     float value() const noexcept override { return entity_.block_value(); }
     float minimum_value() const noexcept override { return 3.0F; }
-    float maximum_value() const noexcept override { return 7.0F; }
+    float maximum_value() const noexcept override { return 10.0F; }
     void set_value(float distance) noexcept override { entity_.set_block_value(distance); }
     void adjust_value(int direction) noexcept override { set_value(value() + (direction < 0 ? -0.5F : 0.5F)); }
     void on_enable() override { entity_.set_block_enabled(true); }
@@ -73,3 +82,4 @@ private:
     ReachModule& entity_;
 };
 } // namespace utility::modules
+

@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "BedrockBuild.hpp"
+
 namespace utility::integration {
 
 namespace game_context_detail {
@@ -45,9 +47,27 @@ inline void observe_game_mode(void* game_mode) noexcept {
     if (image == nullptr) {
         return;
     }
+    const auto build = current_bedrock_build();
     const auto table = reinterpret_cast<std::uintptr_t>(*reinterpret_cast<void**>(candidate));
     const auto base = reinterpret_cast<std::uintptr_t>(image);
-    if (table != base + 0xE820EC0 && table != base + 0xE833530) {
+    if (is_release_12645(build)) {
+        if (table != base + 0xE820EC0 && table != base + 0xE833530) return;
+    } else if (is_release_12650(build)) {
+        // This candidate comes from the exact, byte-verified GameMode range
+        // function. Validate the object structurally instead of carrying the
+        // old LocalPlayer vtable address across versions.
+        if (table < base || table + sizeof(void*) > base + build.image_size ||
+            !game_context_detail::readable(reinterpret_cast<void*>(table), sizeof(void*))) return;
+        const auto first = reinterpret_cast<std::uintptr_t>(*reinterpret_cast<void**>(table));
+        MEMORY_BASIC_INFORMATION code{};
+        if (first < base || first >= base + build.image_size ||
+            !VirtualQuery(reinterpret_cast<void*>(first), &code, sizeof(code)) ||
+            !(code.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) ||
+            !game_context_detail::readable(static_cast<std::byte*>(candidate) + 0x10, sizeof(void*)) ||
+            !game_context_detail::readable(static_cast<std::byte*>(candidate) + 0x1C8, sizeof(void*)) ||
+            !game_context_detail::readable(static_cast<std::byte*>(candidate) + 0x218, sizeof(void*)) ||
+            !game_context_detail::readable(static_cast<std::byte*>(candidate) + 0x220, sizeof(void*))) return;
+    } else {
         return;
     }
     game_context_detail::player.store(candidate, std::memory_order_release);
@@ -75,3 +95,4 @@ inline void clear_game_context() noexcept {
 }
 
 } // namespace utility::integration
+

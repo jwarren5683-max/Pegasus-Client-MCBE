@@ -28,6 +28,7 @@ add_library(BedrockUtilityFramework SHARED
     src/framework/ModuleManager.cpp
     src/framework/Commands.cpp
     src/integration/ChatCommands.cpp
+    src/integration/CompatibilityProbe.cpp
     src/framework/Config.cpp
     src/integration/SplashTextHook.cpp
     src/integration/Renderer.cpp
@@ -42,6 +43,13 @@ add_library(BedrockUtilityFramework SHARED
     src/modules/BaritoneModule.cpp
     src/integration/NativeNavigationAdapter.cpp
 )
+option(BUF_BUILD_AUTOLEAVE_HEALTH_PROBE "Build read-only AutoLeave health diagnostics" OFF)
+if(BUF_BUILD_AUTOLEAVE_HEALTH_PROBE)
+    add_executable(BedrockAutoLeaveHealthProbe ../../tools/bedrock-autoleave-health-probe.cpp)
+    target_compile_features(BedrockAutoLeaveHealthProbe PRIVATE cxx_std_20)
+    target_compile_definitions(BedrockAutoLeaveHealthProbe PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_link_libraries(BedrockAutoLeaveHealthProbe PRIVATE Psapi)
+endif()
 target_link_libraries(BedrockUtilityFramework PRIVATE BedrockNavigation)
 
 target_include_directories(BedrockUtilityFramework PRIVATE src)
@@ -120,6 +128,21 @@ if(BUF_BUILD_RESEARCH_PROBES)
 endif()
 
 option(BUF_BUILD_SMOKE_HOST "Build the authorized self-loading smoke-test host" ON)
+option(BUF_BUILD_COMPAT_SCANNER "Build the read-only Bedrock compatibility scanner" ON)
+
+if(BUF_BUILD_COMPAT_SCANNER)
+    add_executable(BedrockCompatibilityScanner ../../tools/bedrock-memory-scan.cpp)
+    target_compile_features(BedrockCompatibilityScanner PRIVATE cxx_std_20)
+    target_compile_definitions(BedrockCompatibilityScanner PRIVATE
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+        UNICODE
+        _UNICODE
+    )
+    if(MSVC)
+        target_compile_options(BedrockCompatibilityScanner PRIVATE /W4 /permissive- /EHsc)
+    endif()
+endif()
 
 if(BUF_BUILD_SMOKE_HOST)
     add_executable(BedrockUtilitySmokeHost tests/smoke_host.cpp)
@@ -150,7 +173,27 @@ if(BUF_BUILD_SMOKE_HOST)
 endif()
 
 include(CTest)
+add_executable(BedrockEspReadOnlyProbe EXCLUDE_FROM_ALL ../../tools/bedrock-esp-probe.cpp)
+target_compile_features(BedrockEspReadOnlyProbe PRIVATE cxx_std_20)
+target_compile_definitions(BedrockEspReadOnlyProbe PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 if(BUILD_TESTING)
+    # Release builds define NDEBUG, which would otherwise compile assert()-based
+    # test checks out. This applies only to test targets created below; the
+    # production DLL was already defined above and remains a normal Release build.
+    if(MSVC)
+        add_compile_options(/UNDEBUG)
+    endif()
+    add_executable(BedrockChestEspTest tests/chest_esp_test.cpp)
+    target_compile_features(BedrockChestEspTest PRIVATE cxx_std_20)
+    target_compile_definitions(BedrockChestEspTest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    add_test(NAME chest_esp COMMAND BedrockChestEspTest)
+    add_executable(BedrockEspSnapshotTest tests/esp_snapshot_test.cpp)
+    target_compile_features(BedrockEspSnapshotTest PRIVATE cxx_std_20)
+    add_test(NAME esp_snapshot COMMAND BedrockEspSnapshotTest)
+    add_executable(BedrockUtilityBuildProfileTest tests/bedrock_build_test.cpp)
+    target_compile_features(BedrockUtilityBuildProfileTest PRIVATE cxx_std_20)
+    target_compile_definitions(BedrockUtilityBuildProfileTest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+    add_test(NAME bedrock_build_profile COMMAND BedrockUtilityBuildProfileTest)
     add_executable(PegasusSplashTextTest tests/splash_text_test.cpp)
     target_compile_features(PegasusSplashTextTest PRIVATE cxx_std_20)
     target_compile_definitions(PegasusSplashTextTest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
@@ -186,10 +229,24 @@ if(BUILD_TESTING)
     target_include_directories(BedrockUtilityXrayPolicyTest PRIVATE src)
     target_compile_features(BedrockUtilityXrayPolicyTest PRIVATE cxx_std_20)
     add_test(NAME xray_policy COMMAND BedrockUtilityXrayPolicyTest)
+    add_executable(BedrockUtilityXrayLifecycleTest tests/xray_lifecycle_test.cpp src/framework/Logger.cpp src/framework/ModuleManager.cpp src/framework/Commands.cpp)
+    target_compile_definitions(BedrockUtilityXrayLifecycleTest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+    target_compile_features(BedrockUtilityXrayLifecycleTest PRIVATE cxx_std_20)
+    add_test(NAME xray_lifecycle COMMAND BedrockUtilityXrayLifecycleTest)
     add_executable(BedrockUtilityTriggerbotTest tests/triggerbot_policy_test.cpp src/framework/Logger.cpp)
     target_compile_definitions(BedrockUtilityTriggerbotTest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
     target_compile_features(BedrockUtilityTriggerbotTest PRIVATE cxx_std_20)
     add_test(NAME triggerbot_policy COMMAND BedrockUtilityTriggerbotTest)
+    add_executable(BedrockUtilityServerSafetyTest tests/server_safety_test.cpp)
+    target_compile_definitions(BedrockUtilityServerSafetyTest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+    target_compile_features(BedrockUtilityServerSafetyTest PRIVATE cxx_std_20)
+    add_test(NAME server_safety COMMAND BedrockUtilityServerSafetyTest)
+    add_executable(BedrockUtilityAutoLeaveTest tests/auto_leave_policy_test.cpp)
+    target_compile_features(BedrockUtilityAutoLeaveTest PRIVATE cxx_std_20)
+    add_test(NAME auto_leave_policy COMMAND BedrockUtilityAutoLeaveTest)
+    add_executable(BedrockUtilityAutoBridgeTest tests/auto_bridge_policy_test.cpp)
+    target_compile_features(BedrockUtilityAutoBridgeTest PRIVATE cxx_std_20)
+    add_test(NAME auto_bridge_policy COMMAND BedrockUtilityAutoBridgeTest)
     add_executable(BedrockUtilityFullbrightTest tests/fullbright_policy_test.cpp src/modules/FullbrightModule.cpp src/framework/Logger.cpp)
     target_compile_definitions(BedrockUtilityFullbrightTest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
     target_compile_features(BedrockUtilityFullbrightTest PRIVATE cxx_std_20)
@@ -206,6 +263,10 @@ if(BUILD_TESTING)
     target_compile_definitions(BedrockUtilityEntityReachTest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
     target_compile_features(BedrockUtilityEntityReachTest PRIVATE cxx_std_20)
     add_test(NAME entity_reach COMMAND BedrockUtilityEntityReachTest)
+    add_executable(BedrockUtilityReachLayoutTest tests/reach_layout_test.cpp src/modules/ReachModule.cpp src/framework/Logger.cpp)
+    target_compile_definitions(BedrockUtilityReachLayoutTest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+    target_compile_features(BedrockUtilityReachLayoutTest PRIVATE cxx_std_20)
+    add_test(NAME reach_cross_file_layout COMMAND BedrockUtilityReachLayoutTest)
     add_executable(BedrockUtilityGhostHandTest tests/ghost_hand_test.cpp src/framework/Logger.cpp)
     target_compile_definitions(BedrockUtilityGhostHandTest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
     target_compile_features(BedrockUtilityGhostHandTest PRIVATE cxx_std_20)
@@ -217,4 +278,5 @@ if(BUILD_TESTING)
     add_test(NAME menu_interaction COMMAND BedrockUtilityMenuTest)
     set_tests_properties(menu_interaction PROPERTIES SKIP_RETURN_CODE 77)
 endif()
+
 

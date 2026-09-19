@@ -1,11 +1,18 @@
 #include "GameplayModules.hpp"
 #include "EspProjection.hpp"
+#include "EspSnapshot.hpp"
 #include "TriggerbotPolicy.hpp"
+#include "AutoLeavePolicy.hpp"
+#include "AutoLeaveHealth.hpp"
+#include "AutoBridgePolicy.hpp"
 #include "AirjumpPolicy.hpp"
 #include "JetpackPolicy.hpp"
 #include "ChestEspContainers.hpp"
 #include "../integration/GameContext.hpp"
 #include "../integration/NavigationBridge.hpp"
+#include "../integration/ServerSafety.hpp"
+#include "../integration/NavigationNativeLayout.hpp"
+#include "../integration/BedrockBuild.hpp"
 #include "../framework/Logger.hpp"
 #include <TlHelp32.h>
 #include <algorithm>
@@ -30,11 +37,19 @@ std::atomic_bool players_only{}, ready{}, attempted{};
 std::atomic<unsigned> pending_keys{};
 std::atomic<unsigned> trigger_targets{triggerbot::all_targets};
 std::atomic_bool trigger_ready{},airjump_ready{};
+std::atomic_bool esp_ready{};
+std::atomic_bool chest_ready{},chest_snapshot_logged{},chest_draw_logged{};
+std::atomic_bool esp_snapshot_logged{},esp_draw_logged{};
 airjump::Requests airjump_requests;
 std::atomic<float> jetpack_speed{jetpack::default_speed};
 std::atomic<unsigned> jetpack_revision{};
 std::atomic_bool jetpack_ready{};
 std::atomic<unsigned> trigger_revision{};
+std::atomic<float> auto_leave_hearts{auto_leave::default_hearts};
+std::atomic<unsigned> auto_leave_revision{};
+std::atomic_bool auto_leave_ready{};
+std::atomic_bool auto_bridge_ready{};
+auto_leave::Gate auto_leave_gate;
 unsigned key_bit(unsigned code) {
     switch(code) { case 'W': return 1; case 'S': return 2; case 'A': return 4; case 'D': return 8; case VK_SPACE: return 16; default: return 0; }
 }
@@ -55,20 +70,123 @@ Tick original_server_tick{};
 Immune original_immune{};
 StartMining original_start{}, original_creative_start{};
 ContinueMining original_continue{};
+using ActorList = std::vector<void*>(__fastcall*)(void*);
+ActorList runtime_actor_list{};
 
-bool on(GameplayFeature feature) {
-    if(integration::navigation_owns_controls.load() &&
-       (feature==GameplayFeature::autotool||feature==GameplayFeature::phase||feature==GameplayFeature::airjump||
-        feature==GameplayFeature::autosprint||feature==GameplayFeature::triggerbot||feature==GameplayFeature::jetpack))return false;
-    return flags[static_cast<unsigned>(feature)].load();
-}
 template<class T> T read(const void* object, std::size_t offset = 0) {
     T result{};
     if (object && integration::readable_game_memory(static_cast<const Byte*>(object) + offset, sizeof(T)))
         std::memcpy(&result, static_cast<const Byte*>(object) + offset, sizeof(T));
     return result;
 }
+void release_trigger_mouse();
+void auto_bridge_tick(void* player);
+
+bool on(GameplayFeature feature) {
+    if(integration::server_safety::remote_session() && feature!=GameplayFeature::auto_leave&&feature!=GameplayFeature::esp&&feature!=GameplayFeature::chest_esp) return false;
+    if(integration::navigation_owns_controls.load() &&
+       (feature==GameplayFeature::autotool||feature==GameplayFeature::phase||feature==GameplayFeature::airjump||
+        feature==GameplayFeature::autosprint||feature==GameplayFeature::triggerbot||feature==GameplayFeature::jetpack||
+        feature==GameplayFeature::auto_bridge))return false;
+    return flags[static_cast<unsigned>(feature)].load();
+}
+
+bool current_health(void* player,float& health) {
+    const auto copy=[](std::uintptr_t at,void* output,std::size_t size) {
+        if(!integration::readable_game_memory(reinterpret_cast<void*>(at),size))return false;
+        std::memcpy(output,reinterpret_cast<void*>(at),size);return true;
+    };
+    if(integration::is_release_12650(integration::current_bedrock_build())) {
+        const auto safe_copy=[](std::uintptr_t at,void* output,std::size_t size) {
+            SIZE_T got{};return ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<void*>(at),output,size,&got)&&got==size;
+        };
+        // Resolve the component with RPM as well; do not dereference a pool
+        // while a world transition may be retiring it.
+        std::uintptr_t registry{};std::uint32_t entity{};
+        std::uint32_t health_key{};
+        if(!safe_copy(reinterpret_cast<std::uintptr_t>(image)+0x11DC54F4,&health_key,4)||health_key!=7)return false;
+        if(!player||!safe_copy(reinterpret_cast<std::uintptr_t>(player)+0x10,&registry,8)||
+            !safe_copy(reinterpret_cast<std::uintptr_t>(player)+0x18,&entity,4))return false;
+        const auto current=integration::navigation_native::component(registry,entity,0xFD3B0613,80,safe_copy);
+        return auto_leave::health_12650(current,health,safe_copy);
+    }
+    const auto attributes=integration::navigation_native::component(
+        read<std::uintptr_t>(player,0x10),read<std::uint32_t>(player,0x18),
+        integration::navigation_native::attributes_hash,
+        integration::navigation_native::attributes_size,copy);
+    const auto key=read<std::uint32_t>(image,integration::navigation_native::health_definition+4);
+    return key && integration::navigation_native::attribute(attributes,key,health,copy) &&
+        std::isfinite(health) && health>=0.0F && health<=20.0F;
+}
+
+bool executable_game_code(const void* address) {
+    MEMORY_BASIC_INFORMATION information{};
+    if(!address||!VirtualQuery(address,&information,sizeof(information))||
+       information.State!=MEM_COMMIT||information.Type!=MEM_IMAGE||information.AllocationBase!=image)return false;
+    constexpr DWORD executable=PAGE_EXECUTE|PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY;
+    return (information.Protect&executable)!=0 && (information.Protect&PAGE_GUARD)==0;
+}
+
+// IClientInstance::requestLeaveGameAsync is vtable slot 14 in the supported
+// Bedrock interface. It schedules the normal save/disconnect lifecycle and
+// returns immediately; it does not terminate Minecraft or forge packets.
+bool request_leave_game_async(void* player) noexcept {
+    using RequestLeave=void(__fastcall*)(void*);
+    auto* client=read<void*>(player,0xD70);
+    auto* table=read<void**>(client);
+    auto request=read<RequestLeave>(table,14*sizeof(void*));
+    if(integration::is_release_12650(integration::current_bedrock_build())) {
+        // Exact ClientInstance vtable and method; its native diagnostic names
+        // requestLeaveGameAsync. No arbitrary executable slot is accepted.
+        const unsigned char expected[]{0x55,0x56,0x57,0x48,0x81,0xEC,0x00,0x01,0x00,0x00,0x48,0x8D,0xAC,0x24,0x80,0x00,0x00,0x00};
+        if(!auto_leave_ready.load()||table!=reinterpret_cast<void**>(image+0xE9731B0)||
+            reinterpret_cast<Byte*>(request)!=image+0x5DA3B00||
+            std::memcmp(image+0x5DA3B00,expected,sizeof(expected)))return false;
+    }
+    if(!client||!table||!executable_game_code(read<void*>(table))||
+       !executable_game_code(reinterpret_cast<void*>(request)))return false;
+#if defined(_MSC_VER)
+    __try { request(client); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+#else
+    request(client);
+#endif
+    return true;
+}
+
+void auto_leave_tick(void* player,bool new_player) {
+    static unsigned revision{};
+    const auto current_revision=auto_leave_revision.load();
+    if(new_player||revision!=current_revision){auto_leave_gate.reset();revision=current_revision;}
+    float health{};
+    const bool valid=current_health(player,health);
+    if(!auto_leave_gate.update(health,auto_leave_hearts.load(),on(GameplayFeature::auto_leave)&&valid))return;
+    release_trigger_mouse();pending_keys=0;airjump_requests.reset();
+    char message[160]{};
+    std::snprintf(message,sizeof(message),"Auto Leave requested at %.1f hearts (threshold %.1f).",
+        static_cast<double>(health/2.0F),static_cast<double>(auto_leave_hearts.load()));
+    Logger::instance().info(message);
+    if(!request_leave_game_async(player))Logger::instance().info("Auto Leave failed closed: leave-game interface validation failed.");
+}
 template<class Function> Function native(std::uintptr_t rva) { return reinterpret_cast<Function>(image + rva); }
+ActorList find_runtime_actor_list() {
+    // Current open-source Bedrock SDK signature. Wildcards cover stack size and
+    // spill offsets, while the argument setup makes the match specific.
+    constexpr int pattern[]{0x48,0x89,0x5C,0x24,-1,0x55,0x56,0x57,0x48,0x83,0xEC,-1,
+        0x48,0x8B,0xF2,0x48,0x89,0x54,0x24,-1,0x33,0xD2};
+    const auto* dos=reinterpret_cast<const IMAGE_DOS_HEADER*>(image);
+    const auto* nt=reinterpret_cast<const IMAGE_NT_HEADERS64*>(image+dos->e_lfanew);
+    const auto* sections=IMAGE_FIRST_SECTION(nt);Byte* match{};unsigned matches{};
+    for(unsigned s=0;s<nt->FileHeader.NumberOfSections;++s){const auto& section=sections[s];
+        if(!(section.Characteristics&IMAGE_SCN_MEM_EXECUTE))continue;
+        const auto size=section.Misc.VirtualSize;auto* begin=image+section.VirtualAddress;
+        for(std::size_t at=0;at+std::size(pattern)<=size;++at){bool same=true;
+            for(std::size_t i=0;i<std::size(pattern);++i)if(pattern[i]>=0&&begin[at+i]!=pattern[i]){same=false;break;}
+            if(same){match=begin+at;++matches;if(matches>1)return nullptr;}
+        }
+    }
+    return matches==1?reinterpret_cast<ActorList>(match):nullptr;
+}
 template<class Function> Function method(void* object, std::size_t slot) {
     return read<Function>(read<void*>(object), slot);
 }
@@ -87,6 +205,42 @@ bool controls_active() {
     return process == GetCurrentProcessId() && GetCursorInfo(&cursor) && !(cursor.flags & CURSOR_SHOWING);
 }
 bool key(int code) { return (GetAsyncKeyState(code) & 0x8000) != 0; }
+
+// Keep controller support optional and runtime-resolved. Bedrock ships with
+// different XInput DLL names across Windows builds, so no import-library or
+// registry change is needed. A controller only supplies the same boolean gates
+// as the keyboard path; movement and camera remain entirely user-controlled.
+struct ControllerGamepad { unsigned short buttons{}; unsigned char left_trigger{},right_trigger{}; short lx{},ly{},rx{},ry{}; };
+struct ControllerState { unsigned long packet{}; ControllerGamepad gamepad{}; };
+using XInputGetStateFn=unsigned long(__stdcall*)(unsigned,ControllerState*);
+XInputGetStateFn xinput_get_state() noexcept {
+    static std::once_flag once;static XInputGetStateFn function{};
+    std::call_once(once,[] {
+        constexpr wchar_t names[][24]{L"xinput1_4.dll",L"xinput1_3.dll",L"xinput9_1_0.dll"};
+        for(const auto& name:names) {
+            if(auto library=LoadLibraryW(name)) {
+                function=reinterpret_cast<XInputGetStateFn>(GetProcAddress(library,"XInputGetState"));
+                if(function)return;
+            }
+        }
+    });
+    return function;
+}
+struct ControllerControls { bool connected{},modifier{},forward{},jump{}; };
+ControllerControls controller_controls() noexcept {
+    ControllerControls result{};const auto get=xinput_get_state();if(!get)return result;
+    constexpr unsigned short a=0x1000,left_shoulder=0x0100,right_shoulder=0x0200;
+    constexpr short forward_threshold=12000;
+    for(unsigned index=0;index<4;++index) {
+        ControllerState state{};
+        if(get(index,&state)!=0)continue;
+        result.connected=true;
+        result.modifier=result.modifier||(state.gamepad.buttons&(left_shoulder|right_shoulder))!=0||state.gamepad.right_trigger>=180;
+        result.forward=result.forward||state.gamepad.ly>=forward_threshold;
+        result.jump=result.jump||(state.gamepad.buttons&a)!=0;
+    }
+    return result;
+}
 bool local_player(void* player) { return read<void*>(player) == image + 0xE820EC0; }
 std::uint64_t unique_id(void* player) {
     std::uint64_t id{};
@@ -135,18 +289,23 @@ double esp_time() {
 // read between ticks; ReadProcessMemory fails safely if a world is being freed.
 bool camera_read(const void* object,std::size_t offset,void* output,std::size_t size) {
     SIZE_T copied{};
-    return object && ReadProcessMemory(GetCurrentProcess(),static_cast<const Byte*>(object)+offset,
+    const auto address=reinterpret_cast<std::uintptr_t>(object);
+    if(!address||address+offset<address||address+offset+size<address+offset)return false;
+    return ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<void*>(address+offset),
         output,size,&copied) && copied==size;
 }
 struct CameraSample { float view[16]{}; Vec3 origin{}; Frustum frustum{}; void* dimension{}; };
-bool camera_sample(void* player,CameraSample& sample) {
+bool camera_sample(void* player,CameraSample& sample,const integration::BedrockBuildInfo& build=integration::current_bedrock_build()) {
     void* table{};void* client{};void* renderer{};void* renderer_player{};
-    return camera_read(player,0,&table,sizeof(table)) && table==image+0xE820EC0 &&
+    const std::size_t shift=integration::is_release_12650(build)?8:0;
+    return camera_read(player,0,&table,sizeof(table)) &&
+        (table==image+0xE820EC0 ||
+         (integration::is_release_12650(build)&&player==integration::current_player()&&table==image+0xE8E1BC0)) &&
         camera_read(player,0x1C8,&sample.dimension,sizeof(sample.dimension)) && sample.dimension &&
         camera_read(player,0xD70,&client,sizeof(client)) &&
-        camera_read(client,0x418,sample.view,sizeof(sample.view)) &&
-        camera_read(client,0x498,&sample.frustum,sizeof(sample.frustum)) &&
-        camera_read(client,0x1B8,&renderer,sizeof(renderer)) &&
+        camera_read(client,0x418+shift,sample.view,sizeof(sample.view)) &&
+        camera_read(client,0x498+shift,&sample.frustum,sizeof(sample.frustum)) &&
+        camera_read(client,0x1B8+shift,&renderer,sizeof(renderer)) &&
         camera_read(renderer,0x468,&renderer_player,sizeof(renderer_player)) &&
         camera_read(renderer_player,0x660,&sample.origin,sizeof(sample.origin));
 }
@@ -264,6 +423,9 @@ void capture_storage(void* player) {
         for(const auto& container:containers) {
             const auto* b=container.bounds;const auto kind=static_cast<unsigned>(container.kind);
             Box box{{b[0],b[1],b[2]},{b[3],b[4],b[5]},colors[kind]};box.storage_kind=kind;next.boxes.push_back(box);
+        }
+        if(!next.boxes.empty()&&!chest_snapshot_logged.exchange(true)) {
+            char message[128]{};std::snprintf(message,sizeof(message),"ChestESP: native tick published %zu validated storage bounds.",next.boxes.size());Logger::instance().info(message);
         }
     }
     std::lock_guard lock(frame_mutex);storage_frame=std::move(next);
@@ -438,6 +600,77 @@ void jetpack_movement(void* actor, void* movement, bool control) {
         std::memcpy(static_cast<Byte*>(movement)+24,&next,sizeof(next));
 }
 
+void capture_esp_12650() {
+    static double previous{};const auto now=esp_time();if(now-previous<0.05)return;previous=now;
+    Frame next;next.player=integration::current_player();
+    struct Publish { Frame& value; ~Publish(){value.time=esp_time();std::lock_guard lock(frame_mutex);frame=std::move(value);} } publish{next};
+    const auto copy=[](std::uintptr_t at,void* out,std::size_t bytes){return camera_read(reinterpret_cast<void*>(at),0,out,bytes);};
+    std::uintptr_t registry{};std::uint32_t id{};
+    if(!camera_read(next.player,0x10,&registry,sizeof(registry))||
+       !camera_read(next.player,0x18,&id,sizeof(id))||
+       !camera_read(next.player,0x1C8,&next.dimension,sizeof(next.dimension))||!next.dimension)return;
+    std::vector<esp_snapshot::Actor> actors;
+    if(!esp_snapshot::actors(registry,reinterpret_cast<std::uintptr_t>(next.player),id,actors,copy))return;
+    next.boxes.reserve(actors.size());
+    for(const auto& entry:actors){auto* actor=reinterpret_cast<Byte*>(entry.pointer);
+        if(actor==next.player)continue;
+        void* shape{};void* dimension{};Box box{};
+        struct ForeignString { char buffer[16];std::size_t size,capacity; } text{};
+        if(!camera_read(actor,0x220,&shape,sizeof(shape))||!shape||
+           !camera_read(shape,0,&box.lower,sizeof(Vec3))||!camera_read(shape,12,&box.upper,sizeof(Vec3))||
+           !camera_read(actor,0x1C8,&dimension,sizeof(dimension))||
+           !camera_read(actor,0x240,&text,sizeof(text))||!text.size||text.size>256||text.capacity<text.size||text.capacity>65536)continue;
+        std::string name(text.size,'\0');
+        if(text.capacity<16)std::memcpy(name.data(),text.buffer,text.size);
+        else {void* data{};std::memcpy(&data,text.buffer,sizeof(data));if(!camera_read(data,0,name.data(),text.size))continue;}
+        std::uintptr_t owner{};std::uint32_t actual{};void* dimension2{};
+        if(!camera_read(actor,0x10,&owner,sizeof(owner))||!camera_read(actor,0x18,&actual,sizeof(actual))||
+           !camera_read(actor,0x1C8,&dimension2,sizeof(dimension2))||owner!=registry||actual!=entry.entity||dimension2!=dimension||
+           !esp_entity(actor,next.player,dimension,next.dimension,name,box))continue;
+        box.player=name=="minecraft:player"||name.starts_with("minecraft:player.");
+        box.color=box.player?RGB(255,50,50):name.starts_with("minecraft:")?RGB(55,135,255):RGB(60,235,90);
+        void* state{};Vec3 positions[2]{};
+        if(camera_read(actor,0x218,&state,sizeof(state))&&camera_read(state,0,positions,sizeof(positions))){
+            const auto movement=minus(positions[0],positions[1]);
+            if(valid(movement)&&dot(movement,movement)<16.0F)box.movement=movement;
+        }
+        next.boxes.push_back(box);
+    }
+    if(!next.boxes.empty()&&!esp_snapshot_logged.exchange(true)) {
+        char message[128]{};std::snprintf(message,sizeof(message),"ESP: native tick published %zu validated entity bounds.",next.boxes.size());
+        Logger::instance().info(message);
+    }
+}
+
+void __fastcall esp_tick_12650(void* player) {
+    original_tick(player);
+    void* table{};if(!camera_read(player,0,&table,sizeof(table))||table!=image+0xE8E1BC0)return;
+    integration::game_context_detail::player.store(player,std::memory_order_release);
+    // AutoLeave runs on the engine's verified LocalPlayer tick, after native
+    // health updates, never on the overlay thread. Dimension changes rearm it.
+    if(auto_leave_ready.load()) {
+        static void* previous_player{};static void* previous_dimension{};
+        void* dimension{};
+        const bool valid=camera_read(player,0x1C8,&dimension,sizeof(dimension))&&dimension;
+        const bool changed=previous_player!=player||previous_dimension!=dimension;
+        previous_player=player;previous_dimension=valid?dimension:nullptr;
+        if(valid) {
+            auto_leave_tick(player,changed);
+            if(auto_leave_gate.fired())return;
+        }
+        else auto_leave_gate.reset();
+    }
+    if(auto_bridge_ready.load())auto_bridge_tick(player);
+    if(on(GameplayFeature::esp)) {
+        try {capture_esp_12650();} catch(...) {
+            std::lock_guard lock(frame_mutex);frame=Frame{};
+        }
+    }
+    if(chest_ready.load()&&on(GameplayFeature::chest_esp)) {
+        try {capture_storage(player);}catch(...) {std::lock_guard lock(frame_mutex);storage_frame=Frame{};}
+    }
+}
+
 void __fastcall airjump_hook(void* id,void* jump_control,void* ground,void* player_component,
     void* squid,void* was_water,void* head_water,void* snow,void* lightweight,void* lava_drag,
     void* aabb,void* swim,void* effects,void* subboxes,void* actor_flags,void* jump_state,
@@ -454,32 +687,98 @@ void __fastcall airjump_hook(void* id,void* jump_control,void* ground,void* play
         head_water,snow,lightweight,lava_drag,aabb,swim,effects,subboxes,actor_flags,jump_state,movement,registry,region);
 }
 
-// Use the same level HitResult and GameMode::_attack entry as native targeting.
-// Only the game thread resolves the weak entity reference; no Actor* survives a tick.
+// Use the live level HitResult to validate the target. Attack delivery is a
+// spaced local mouse press, never a re-entrant GameMode call from Player::tick.
 bool verify_triggerbot() {
     struct Signature { std::uintptr_t rva; std::initializer_list<Byte> bytes; };
     const Signature signatures[]{
         {0xD72560,{0x48,0x8B,0x81,0xE8,0x01,0,0,0xC3}},
         {0x47E8B00,{0x48,0x83,0xEC,0x48,0x48,0x8D,0x51,0x38,0x48,0x8D,0x4C,0x24,0x28}},
-        {0x26EFD60,{0x48,0x83,0xEC,0x28,0x80,0xB9,0x69,0x02,0,0,0}},
-        {0x2D2D020,{0x4D,0x89,0xC1,0x41,0xB0,0x01,0xE9}},
-        {0x2D33510,{0x4D,0x89,0xC1,0x80,0xB9,0xC8,0,0,0,0x01}}
+        {0x26EFD60,{0x48,0x83,0xEC,0x28,0x80,0xB9,0x69,0x02,0,0,0}}
     };
     for (const auto& signature:signatures)
         if(std::memcmp(image+signature.rva,signature.bytes.begin(),signature.bytes.size())) return false;
-    return read<void*>(image,0xE81A090+0x78)==image+0x2D2D020 &&
-        read<void*>(image,0xE81A130+0x78)==image+0x2D33510;
+    return true;
 }
-void triggerbot_tick(void* player, bool control, bool (*input_active)() = controls_active) {
+bool trigger_button_down{};
+ULONGLONG trigger_button_time{};
+bool send_trigger_mouse(DWORD mouse_flags) {
+    INPUT input{};input.type=INPUT_MOUSE;input.mi.dwFlags=mouse_flags;
+    return SendInput(1,&input,sizeof(input))==1;
+}
+
+// AutoBridge sends the same ordinary right-click a user would send. It never
+// calls a game-mode placement method or writes inventory. A short pulse lets
+// the normal game/server placement path accept or reject the action.
+bool emit_bridge_place() {
+    if(!controls_active()||integration::server_safety::remote_session())return false;
+    if(!send_trigger_mouse(MOUSEEVENTF_RIGHTDOWN))return false;
+    // Never intentionally leave the synthetic button held if Windows drops
+    // the first release event. One bounded retry is safe and fail-closed.
+    bool released=send_trigger_mouse(MOUSEEVENTF_RIGHTUP);
+    if(!released)released=send_trigger_mouse(MOUSEEVENTF_RIGHTUP);
+    if(!released)return false;
+    static ULONGLONG last_log{};const auto now=GetTickCount64();
+    if(now-last_log>=1000){last_log=now;Logger::instance().info("Auto Bridge dispatched guarded right-click input.");}
+    return true;
+}
+void auto_bridge_tick(void* player) {
+    static auto_bridge::Cadence cadence;
+    static void* previous_player{};static void* previous_dimension{};
+    const auto now=GetTickCount64();
+    auto* dimension=read<void*>(player,0x1C8);
+    if(previous_player!=player||previous_dimension!=dimension){cadence.reset();previous_player=player;previous_dimension=dimension;}
+    const auto rotation=read<void*>(player,0x228);
+    const auto pitch=read<float>(rotation,0);
+    const auto supplies=read<void*>(player,0x5B8);
+    int selected=-1;
+    // Keep the relaxed 26.50 slot check that worked in testing, but do not let
+    // a failed read silently become slot 0. ReadProcessMemory fails closed.
+    const bool selected_slot=supplies&&camera_read(supplies,0x10,&selected,sizeof(selected))&&
+        selected>=0&&selected<9;
+    const auto controller=controller_controls();
+    // The 26.50 player-alive target is not part of the verified profile yet;
+    // controls are already disabled by the game when the local player is not
+    // interactive. Keep this candidate fail-closed on pointer/dimension only
+    // instead of calling an unverified native address.
+    const bool alive=integration::is_release_12650(integration::current_bedrock_build())
+        ? player&&dimension : player&&dimension&&native<bool(__fastcall*)(void*)>(0x26EFD60)(player);
+    const auto input=auto_bridge::Input{
+        on(GameplayFeature::auto_bridge),
+        !integration::server_safety::remote_session(),
+        controls_active(),
+        alive,
+        key('V')||controller.modifier,key('W')||controller.forward,key(VK_SPACE)||controller.jump,
+        std::isfinite(pitch)&&pitch>=20.0F&&pitch<=89.5F,
+        selected_slot};
+    if(cadence.update(now,input).place)emit_bridge_place();
+}
+void release_trigger_mouse() {
+    if(!trigger_button_down)return;
+    send_trigger_mouse(MOUSEEVENTF_LEFTUP);trigger_button_down=false;trigger_button_time=0;
+}
+bool emit_local_attack() {
+    if(trigger_button_down||!controls_active()||!integration::server_safety::local_world())return false;
+    if(!send_trigger_mouse(MOUSEEVENTF_LEFTDOWN))return false;
+    trigger_button_down=true;trigger_button_time=GetTickCount64();
+    static ULONGLONG last_log{};const auto now=trigger_button_time;
+    if(now-last_log>=1000){last_log=now;Logger::instance().info("Trigger Bot dispatched local attack input.");}
+    return true;
+}
+using TriggerAction=bool(*)();
+void triggerbot_tick(void* player, bool control, bool (*input_active)() = controls_active,
+    TriggerAction attack_action = emit_local_attack) {
     static triggerbot::Cadence cadence(static_cast<unsigned>(GetTickCount64()) ^ GetCurrentProcessId());
     static unsigned revision{};
     const auto current_revision=trigger_revision.load();
+    const auto now=GetTickCount64();
+    if(trigger_button_down && (now<trigger_button_time || now-trigger_button_time>=15 ||
+       !on(GameplayFeature::triggerbot) || !control || !input_active())) release_trigger_mouse();
     if(revision!=current_revision) { cadence.reset(); revision=current_revision; }
     const auto stop=[&] { cadence.reset(); };
     if(!on(GameplayFeature::triggerbot)||!trigger_ready.load()||!control||!local_player(player)||
        !integration::game_context_detail::picker_ready.load()) { stop(); return; }
     const auto observed=integration::game_context_detail::crosshair_time.load();
-    const auto now=GetTickCount64();
     if(!observed||now<observed||now-observed>100||
        integration::game_context_detail::crosshair_player.load()!=player) { stop(); return; }
     auto* level=read<void*>(player,0x1D8);
@@ -496,18 +795,13 @@ void triggerbot_tick(void* player, bool control, bool (*input_active)() = contro
     const auto type=triggerbot::classify(name,living);
     const auto options=trigger_targets.load();
     if(!esp_identifier(name)||!triggerbot::selected(type,options)) { stop(); return; }
-    auto* mode=read<void*>(player,0xAA0);
-    auto* table=read<Byte*>(mode);
-    if(read<void*>(mode,8)!=player || (table!=image+0xE81A090 && table!=image+0xE81A130)) { stop(); return; }
-    const auto attack=method<bool(__fastcall*)(void*,void*,const Vec3*)>(mode,0x78);
-    if(reinterpret_cast<void*>(attack)!=(table==image+0xE81A090?image+0x2D2D020:image+0x2D33510)) { stop(); return; }
     const auto position=read<Vec3>(hit,0x2C);
     if(!valid(position)) { stop(); return; }
     const triggerbot::TargetKey target{reinterpret_cast<std::uintptr_t>(actor),reinterpret_cast<std::uintptr_t>(dimension),read<std::uint32_t>(actor,0x18)};
     if(!cadence.update(esp_time(),target,true)) return;
-    // Recheck menu settings immediately before invoking the native attack.
+    // Recheck foreground and menu settings immediately before the native attack.
     if(on(GameplayFeature::triggerbot)&&trigger_revision.load()==revision&&input_active())
-        attack(mode,actor,&position);
+        attack_action();
 }
 
 void tick_features(void* player,Vec3 before,bool alive_before) {
@@ -535,7 +829,9 @@ void tick_features(void* player,Vec3 before,bool alive_before) {
         }
     }
     if(pending_clipboard[0] && copy_clipboard(pending_clipboard))pending_clipboard[0]=0;
+    auto_leave_tick(player,changed);
     const bool control=alive && controls_active();
+    auto_bridge_tick(player);
     triggerbot_tick(player,control);
     const auto pressed=pending_keys.exchange(0);
     const auto down=[&](unsigned code){return key(code)||(pressed&key_bit(code))!=0;};
@@ -565,6 +861,7 @@ void tick_features(void* player,Vec3 before,bool alive_before) {
     if(on(GameplayFeature::chest_esp))capture_storage(player);
 }
 void __fastcall local_tick_features(void* player) {
+    integration::server_safety::observe_client_tick();
     const auto before=read<Vec3>(read<void*>(player,0x218));
     const bool alive_before=native<bool(__fastcall*)(void*)>(0x26EFD60)(player);
     integration::navigation_tick(player);
@@ -586,6 +883,7 @@ void __fastcall tick_hook(void* player) {
     dispatch_jetpack_tick(player,local_tick_features,true);
 }
 void __fastcall server_tick_hook(void* player) {
+    if(our_player(player)) integration::server_safety::observe_integrated_server_tick();
     dispatch_jetpack_tick(player,original_server_tick,our_player(player));
 }
 // The native closest-space system only adds horizontal ejection velocity.
@@ -728,6 +1026,28 @@ void initialize() {
     const auto* dos=reinterpret_cast<const IMAGE_DOS_HEADER*>(image);
     if(!image||dos->e_magic!=IMAGE_DOS_SIGNATURE)return;
     const auto* nt=reinterpret_cast<const IMAGE_NT_HEADERS64*>(image+dos->e_lfanew);
+    if(nt->FileHeader.TimeDateStamp==0x6AA482FD&&nt->OptionalHeader.SizeOfImage==0x12C01000){
+        esp_ready=false;
+        constexpr Byte prologue[]{0x55,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x56,0x57,0x53,0x48,0x81,0xEC,0xD8,0x02,0,0};
+        original_tick=native<Tick>(0x475EE60);
+        if(std::memcmp(image+0x475EE60,prologue,sizeof(prologue))||
+           !swap_slot(0xE8E1BC0+0xC0,reinterpret_cast<void*>(original_tick),reinterpret_cast<void*>(&esp_tick_12650))) {
+            Logger::instance().info("ESP unavailable: exact 26.50 local tick slot/prologue mismatch.");return;
+        }
+        auto_bridge_ready=true;
+        Logger::instance().info("Auto Bridge: 26.50 local tick connected; guarded input-assist candidate ready (V+W+Space, look down).");
+        Logger::instance().info("ESP: 26.50 read-only packed snapshots connected to validated native local tick; waiting for local registry and camera validation. No native actor-list calls.");
+        constexpr Byte leave_prologue[]{0x55,0x56,0x57,0x48,0x81,0xEC,0x00,0x01,0x00,0x00,0x48,0x8D,0xAC,0x24,0x80,0x00,0x00,0x00};
+        constexpr Byte component_stride[]{0x4B,0x8D,0x04,0x80,0xC1,0xE0,0x04,0x48,0x01,0xC1};
+        constexpr Byte instance_stride[]{0x4D,0x89,0xD0,0x4D,0x29,0xC8,0x4D,0x89,0xC1,0x49,0xC1,0xE1,0x05,0x4F,0x8D,0x04,0x41,0x4C,0x03,0x41,0x18};
+        auto_leave_ready=read<void*>(image,0xE9731B0+14*8)==image+0x5DA3B00&&
+            !std::memcmp(image+0x5DA3B00,leave_prologue,sizeof(leave_prologue))&&
+            !std::memcmp(image+0x2539878,component_stride,sizeof(component_stride))&&
+            !std::memcmp(image+0x31A129D,instance_stride,sizeof(instance_stride));
+        Logger::instance().info(auto_leave_ready.load()?"AutoLeave: exact 26.50 save/disconnect method verified; LocalPlayer tick health monitor connected, waiting for validated health attributes.":"AutoLeave unavailable: exact 26.50 leave-game method mismatch.");
+        chest_ready=chest_esp::profile_verified(image);
+        Logger::instance().info(chest_ready.load()?"ChestESP: exact 26.50 block/chunk lookup prologues verified; native local tick and +0x50 storage bounds connected.":"ChestESP unavailable: exact 26.50 native storage profile mismatch.");return;
+    }
     if(nt->FileHeader.TimeDateStamp!=0x6A8378BA||nt->OptionalHeader.SizeOfImage!=0x12888000)return;
     struct Slot { std::uintptr_t rva,target; void* hook; };
     const Slot slots[]{
@@ -754,38 +1074,65 @@ void initialize() {
     jetpack_ready=swap_slot(0xE833530+0xC0,reinterpret_cast<void*>(original_server_tick),
         reinterpret_cast<void*>(&server_tick_hook));
     trigger_ready=verify_triggerbot();
-    ready=true;Logger::instance().info("Native gameplay modules initialized for Minecraft 1.26.4501.0.");
+    auto_bridge_ready=true;
+    Logger::instance().info(trigger_ready.load()?"Trigger Bot ready for local worlds; safe input delivery active.":
+        "Trigger Bot unavailable: target-picker signature mismatch.");
+    esp_ready=true;ready=true;Logger::instance().info("Native gameplay modules initialized for Minecraft 1.26.4501.0.");
 }
 }
 
 std::string_view GameplayModule::name() const noexcept {
-    constexpr std::string_view names[]{"ESP","Autotool","Phase","Airjump","deathposition","autosprint","ChestESP","triggerbot","Jetpack"};
+    constexpr std::string_view names[]{"ESP","Autotool","Phase","Airjump","deathposition","autosprint","ChestESP","triggerbot","Jetpack","Auto Leave","Auto Bridge"};
     return names[static_cast<unsigned>(feature_)];
 }
 ModuleCategory GameplayModule::category() const noexcept {
-    switch(feature_){case GameplayFeature::triggerbot:return ModuleCategory::combat;
+    switch(feature_){case GameplayFeature::triggerbot:case GameplayFeature::auto_leave:return ModuleCategory::combat;
     case GameplayFeature::esp:case GameplayFeature::chest_esp:return ModuleCategory::visual;
     case GameplayFeature::autotool:case GameplayFeature::deathposition:return ModuleCategory::player;
     default:return ModuleCategory::movement;}
 }
 bool GameplayModule::available() const noexcept {
+    if(feature_==GameplayFeature::auto_leave&&integration::is_release_12650(integration::current_bedrock_build())) {
+        float health{};return auto_leave_ready.load()&&current_health(integration::current_player(),health);
+    }
+    if(feature_==GameplayFeature::auto_bridge) return auto_bridge_ready.load();
+    if(feature_==GameplayFeature::esp||(feature_==GameplayFeature::chest_esp&&integration::is_release_12650(integration::current_bedrock_build()))) {
+        if(integration::is_release_12650(integration::current_bedrock_build())) {
+            static std::mutex validation_mutex;std::lock_guard lock(validation_mutex);
+            static double previous{};const double now=esp_time();
+            if(now-previous>=0.5) {
+                previous=now;Frame sample;sample.player=integration::current_player();
+                std::uintptr_t registry{};std::uint32_t id{};std::vector<esp_snapshot::Actor> actors;
+                const auto copy=[](std::uintptr_t at,void* out,std::size_t size){return camera_read(reinterpret_cast<void*>(at),0,out,size);};
+                const bool valid=camera_read(sample.player,0x10,&registry,sizeof(registry))&&
+                    camera_read(sample.player,0x18,&id,sizeof(id))&&
+                    camera_read(sample.player,0x1C8,&sample.dimension,sizeof(sample.dimension))&&
+                    esp_snapshot::actors(registry,reinterpret_cast<std::uintptr_t>(sample.player),id,actors,copy)&&refresh_camera(sample);
+                if(valid&&!esp_ready.load())Logger::instance().info("ESP: local packed actor membership and camera projection validated; overlay ready.");
+                esp_ready=valid;
+            }
+        }
+        return esp_ready.load()&&(feature_!=GameplayFeature::chest_esp||chest_ready.load());
+    }
     return ready.load() && (feature_!=GameplayFeature::jetpack || jetpack_ready.load()) &&
         (feature_!=GameplayFeature::airjump || airjump_ready.load()) && (feature_!=GameplayFeature::triggerbot ||
         (trigger_ready.load() && integration::game_context_detail::picker_ready.load()));
 }
+bool GameplayModule::allowed_on_remote_server() const noexcept { return feature_==GameplayFeature::auto_leave||feature_==GameplayFeature::esp||feature_==GameplayFeature::chest_esp; }
 void GameplayModule::on_register(EventBus&) { initialize(); }
-void GameplayModule::on_enable() { if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot)++trigger_revision; flags[static_cast<unsigned>(feature_)]=true; }
-void GameplayModule::on_disable() { flags[static_cast<unsigned>(feature_)]=false; if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot)++trigger_revision; }
-bool GameplayModule::has_value() const noexcept { return feature_==GameplayFeature::jetpack; }
-std::string_view GameplayModule::value_label() const noexcept { return "Speed"; }
-std::string_view GameplayModule::value_suffix() const noexcept { return " blocks/s"; }
-float GameplayModule::value() const noexcept { return has_value()?jetpack_speed.load():0.0F; }
-float GameplayModule::minimum_value() const noexcept { return has_value()?jetpack::minimum_speed:0.0F; }
-float GameplayModule::maximum_value() const noexcept { return has_value()?jetpack::maximum_speed:0.0F; }
+void GameplayModule::on_enable() { if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;Logger::instance().info("Trigger Bot enabled for local-world input delivery.");} if(feature_==GameplayFeature::auto_leave){++auto_leave_revision;Logger::instance().info("Auto Leave enabled.");} if(feature_==GameplayFeature::auto_bridge)Logger::instance().info("Auto Bridge enabled: keyboard V+W+Space or controller LB/RB/RT + left-stick-forward + A; look down."); flags[static_cast<unsigned>(feature_)]=true; }
+void GameplayModule::on_disable() { flags[static_cast<unsigned>(feature_)]=false; if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;release_trigger_mouse();Logger::instance().info("Trigger Bot disabled.");} if(feature_==GameplayFeature::auto_leave)++auto_leave_revision; if(feature_==GameplayFeature::auto_bridge)Logger::instance().info("Auto Bridge disabled."); }
+bool GameplayModule::has_value() const noexcept { return feature_==GameplayFeature::jetpack||feature_==GameplayFeature::auto_leave; }
+std::string_view GameplayModule::value_label() const noexcept { return feature_==GameplayFeature::auto_leave?"Leave at":"Speed"; }
+std::string_view GameplayModule::value_suffix() const noexcept { return feature_==GameplayFeature::auto_leave?" hearts":" blocks/s"; }
+float GameplayModule::value() const noexcept { return feature_==GameplayFeature::auto_leave?auto_leave_hearts.load():feature_==GameplayFeature::jetpack?jetpack_speed.load():0.0F; }
+float GameplayModule::minimum_value() const noexcept { return feature_==GameplayFeature::auto_leave?auto_leave::minimum_hearts:feature_==GameplayFeature::jetpack?jetpack::minimum_speed:0.0F; }
+float GameplayModule::maximum_value() const noexcept { return feature_==GameplayFeature::auto_leave?auto_leave::maximum_hearts:feature_==GameplayFeature::jetpack?jetpack::maximum_speed:0.0F; }
 void GameplayModule::set_value(float value) noexcept {
-    if(has_value()&&std::isfinite(value))jetpack_speed.store(std::clamp(value,minimum_value(),maximum_value()));
+    if(feature_==GameplayFeature::auto_leave){auto_leave_hearts.store(auto_leave::clamp_hearts(value));return;}
+    if(feature_==GameplayFeature::jetpack&&std::isfinite(value))jetpack_speed.store(std::clamp(value,minimum_value(),maximum_value()));
 }
-void GameplayModule::adjust_value(int direction) noexcept { if(direction)set_value(value()+(direction<0?-1.0F:1.0F)); }
+void GameplayModule::adjust_value(int direction) noexcept { if(direction)set_value(value()+(direction<0?(feature_==GameplayFeature::auto_leave?-0.5F:-1.0F):(feature_==GameplayFeature::auto_leave?0.5F:1.0F))); }
 std::string_view GameplayModule::boolean_setting_name() const noexcept { return feature_==GameplayFeature::esp ? "Players only" : ""; }
 bool GameplayModule::boolean_setting() const noexcept { return players_only.load(); }
 void GameplayModule::set_boolean_setting(bool value) noexcept { if(feature_==GameplayFeature::esp)players_only=value; }
@@ -820,7 +1167,7 @@ void GameplayModule::on_key_up(unsigned code) noexcept {
 }
 void GameplayModule::draw_overlay(void* target,int width,int height) noexcept {
     const bool storage=feature_==GameplayFeature::chest_esp;
-    if((feature_!=GameplayFeature::esp&&!storage)||!enabled())return;
+    if((feature_!=GameplayFeature::esp&&!storage)||!enabled()||!available())return;
     Frame copy;{std::lock_guard lock(frame_mutex);copy=storage?storage_frame:frame;}
     auto& camera_cache=storage?last_storage_camera:last_camera;
     const double age=esp_time()-copy.time;
@@ -844,8 +1191,11 @@ void GameplayModule::draw_overlay(void* target,int width,int height) noexcept {
             if(a.z<near_plane||b.z<near_plane){const float t=(near_plane-a.z)/(b.z-a.z);const Vec3 cut{a.x+t*(b.x-a.x),a.y+t*(b.y-a.y),near_plane};if(a.z<near_plane)a=cut;else b=cut;}
             const auto screen=[&](Vec3 v){return POINT{static_cast<LONG>(std::clamp(width*0.5F*(1+v.x*copy.scale_x/v.z),-100000.0F,100000.0F)),static_cast<LONG>(std::clamp(height*0.5F*(1-v.y*copy.scale_y/v.z),-100000.0F,100000.0F))};};
             auto p=screen(a),q=screen(b);MoveToEx(dc,p.x,p.y,nullptr);LineTo(dc,q.x,q.y);
+            if(!storage&&!esp_draw_logged.exchange(true))Logger::instance().info("ESP: projected entity edges submitted to the live overlay.");
+            if(storage&&!chest_draw_logged.exchange(true))Logger::instance().info("ChestESP: projected storage edges submitted to the live overlay.");
         }
         SelectObject(dc,old);DeleteObject(pen);
     }
 }
 }
+

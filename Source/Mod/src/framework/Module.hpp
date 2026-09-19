@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <string>
 #include <vector>
+#include "../integration/ServerSafety.hpp"
 
 namespace utility {
 
@@ -27,6 +28,10 @@ public:
     [[nodiscard]] virtual std::string_view name() const noexcept = 0;
     [[nodiscard]] virtual ModuleCategory category() const noexcept { return ModuleCategory::misc; }
     [[nodiscard]] virtual bool available() const noexcept { return true; }
+    [[nodiscard]] virtual bool allowed_on_remote_server() const noexcept { return false; }
+    [[nodiscard]] bool usable() const noexcept {
+        return available() && (allowed_on_remote_server() || !integration::server_safety::remote_session());
+    }
     [[nodiscard]] virtual bool has_value() const noexcept { return false; }
     [[nodiscard]] virtual std::string_view value_label() const noexcept { return "Distance"; }
     [[nodiscard]] virtual std::string_view value_suffix() const noexcept { return " blocks"; }
@@ -57,7 +62,7 @@ public:
     virtual std::vector<std::string> command_help() const { return {}; }
 
     void set_enabled(bool enabled) {
-        if (enabled && !available()) {
+        if (enabled && !usable()) {
             return;
         }
         if (enabled_ == enabled) {

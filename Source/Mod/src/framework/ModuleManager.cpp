@@ -29,6 +29,10 @@ void ModuleManager::shutdown() noexcept {
 
 void ModuleManager::tick() noexcept {
     for (const auto& module : modules_) {
+        if (module->enabled() && !module->usable()) {
+            module->set_enabled(false);
+            continue;
+        }
         if (module->enabled()) {
             module->on_tick();
         }

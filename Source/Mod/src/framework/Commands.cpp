@@ -133,7 +133,7 @@ bool Commands::execute(std::string_view text, ModuleManager& modules, std::vecto
     if (!code) { replies.emplace_back("Unknown or reserved key: " + args[2] + ". Use A-Z, 0-9, F1-F24 or a named key (e.g. space, lshift)."); return true; }
     const auto mode = lower(args[3]);
     if (mode != "toggle" && mode != "keyhold") { replies.emplace_back(usage); return true; }
-    if (!module->available()) { replies.emplace_back("Module unavailable in this game build: " + std::string(module->name())); return true; }
+    if (!module->usable()) { replies.emplace_back("Module unavailable in this session: " + std::string(module->name())); return true; }
     std::lock_guard lock(mutex_);
     auto found = std::find_if(bindings_.begin(), bindings_.end(), [module](const Binding& b){return b.module==module;});
     if (found != bindings_.end()) {

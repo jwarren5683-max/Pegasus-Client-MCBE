@@ -38,6 +38,20 @@ constexpr std::array<LightPatch,6> texture_patches{{
     {0x5AD9D9D,4,{0x66,0x0F,0xFE,0xC8},{0x66,0x0F,0x76,0xC9}},
     {0x69F67C0,7,{0x41,0x81,0xC2,0,0,0,0xFF},{0x41,0xBA,0xFF,0xFF,0xFF,0xFF,0x90}}
 }};
+// Same renderer-only operations in the exact 1.26.5101.0 image. Locations
+// were checked against unwind boundaries and final packed RGBA stores.
+constexpr auto light_patches_12650=[] {
+    auto p=light_patches;
+    p[0].rva=0x6024734;p[1].rva=0x6024A2B;
+    p[2].rva=0x60286CA;p[3].rva=0x60287A2;
+    return p;
+}();
+constexpr auto texture_patches_12650=[] {
+    auto p=texture_patches;
+    p[0].rva=0x6619E89;p[1].rva=0x6618790;p[2].rva=0x66187E0;
+    p[3].rva=0x6619B63;p[4].rva=0x6619BAD;p[5].rva=0x692D2F0;
+    return p;
+}();
 struct Graphics { uintptr_t object; uintptr_t block; uintptr_t type; int shape; float ao; bool retained; };
 using Tick = void(__fastcall*)(void*);
 struct State {
@@ -50,6 +64,15 @@ struct State {
     bool applied_fullbright{};
     bool applied_xray{};
     uintptr_t base{};
+    uintptr_t image_size{};
+    uintptr_t graphics_vector{};
+    uintptr_t graphics_vtable{};
+    bool adaptive_12650{};
+    bool native_12650{};
+    bool native_lighting_verified{};
+    uintptr_t coordinator_table{};
+    uintptr_t rebuild_target{};
+    bool snapshot_failure_logged{};
     Tick original{};
     std::recursive_mutex mutex;
     std::vector<Graphics> saved;
@@ -57,6 +80,9 @@ struct State {
     uintptr_t registry_end{};
     uintptr_t stone_graphics{};
     unsigned refresh_passes{};
+    unsigned discovery_section{};
+    uintptr_t discovery_offset{};
+    ULONGLONG next_discovery{};
 };
 // Native callbacks and their storage live until Minecraft exits; the DLL is pinned.
 State& state() { static State* s = new State; return *s; }
@@ -68,7 +94,11 @@ bool readable(uintptr_t p, size_t size) noexcept {
     return p >= reinterpret_cast<uintptr_t>(m.BaseAddress) &&
         p + size <= reinterpret_cast<uintptr_t>(m.BaseAddress) + m.RegionSize;
 }
-template<class T> T get(uintptr_t p) noexcept { T v{}; if(readable(p,sizeof(T))) std::memcpy(&v,reinterpret_cast<void*>(p),sizeof(T)); return v; }
+template<class T> T get(uintptr_t p) noexcept {
+    T v{}; SIZE_T copied{};
+    if (!p || !ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<void*>(p),&v,sizeof(T),&copied) || copied!=sizeof(T)) return {};
+    return v;
+}
 bool name_of(uintptr_t type, char (&out)[160], size_t& length) noexcept {
     const uintptr_t text=type+0xE8;
     if(!readable(text,32)) return false;
@@ -117,19 +147,41 @@ bool write_code(uintptr_t p,const void* bytes,size_t n) noexcept {
     DWORD ignored{};VirtualProtect(reinterpret_cast<void*>(p),n,previous,&ignored);return true;
 }
 void jump(unsigned char* p,uintptr_t target) { p[0]=0xFF;p[1]=0x25;std::memset(p+2,0,4);std::memcpy(p+6,&target,8); }
+bool validate_native_lighting() {
+    const auto base=state().base;
+    for(const auto& p:light_patches_12650)
+        if(!readable(base+p.rva,p.size)||std::memcmp(reinterpret_cast<void*>(base+p.rva),p.before.data(),p.size))return false;
+    for(const auto& p:texture_patches_12650)
+        if(!readable(base+p.rva,p.size)||std::memcmp(reinterpret_cast<void*>(base+p.rva),p.before.data(),p.size))return false;
+    // Validate all five containing functions, not only short patch patterns.
+    struct Entry {uintptr_t rva;size_t size;const char* bytes;};
+    const Entry entries[]{
+        {0x6024600,19,"\x41\x57\x41\x56\x41\x55\x41\x54\x56\x57\x55\x53\x48\x81\xEC\xA8\x00\x00\x00"},
+        {0x6028600,19,"\x41\x57\x41\x56\x41\x55\x41\x54\x56\x57\x55\x53\x48\x81\xEC\x18\x01\x00\x00"},
+        {0x66184D0,19,"\x41\x57\x41\x56\x41\x55\x41\x54\x56\x57\x55\x53\x48\x81\xEC\xF8\x01\x00\x00"},
+        {0x6619C50,15,"\x41\x57\x41\x56\x56\x57\x55\x53\x48\x81\xEC\xD8\x00\x00\x00"},
+        {0x692D0D0,17,"\x41\x57\x41\x56\x41\x54\x56\x57\x55\x53\x48\x81\xEC\xD0\x00\x00\x00"}
+    };
+    for(const auto& e:entries)
+        if(!readable(base+e.rva,e.size)||std::memcmp(reinterpret_cast<void*>(base+e.rva),e.bytes,e.size))return false;
+    return true;
+}
 std::vector<LightPatch> lighting_patches(bool fullbright,int level) {
-    std::vector<LightPatch> patches(light_patches.begin(),light_patches.end());
+    const auto& mesh=state().native_12650?light_patches_12650:light_patches;
+    const auto& texture=state().native_12650?texture_patches_12650:texture_patches;
+    std::vector<LightPatch> patches(mesh.begin(),mesh.end());
     // At lower levels retain the native light lookup; the white lookup used
     // by maximum Fullbright would otherwise erase the slider's effect.
     const auto mesh_level=static_cast<unsigned char>(fullbright?std::clamp(level,9,15):15);
     patches[2].after[1]=mesh_level;
     patches[3].after[2]=mesh_level;
     if(fullbright&&mesh_level==15)
-        patches.insert(patches.end(),texture_patches.begin(),texture_patches.end());
+        patches.insert(patches.end(),texture.begin(),texture.end());
     return patches;
 }
 bool lights(bool on, bool fullbright=false,int level=15) {
     auto& s=state();
+    if(s.adaptive_12650 || (s.native_12650&&!s.native_lighting_verified)) return true;
     const auto patches=lighting_patches(on?fullbright:s.applied_fullbright,on?level:s.applied_level);
     for(const auto& p:patches) {
         const auto& expected=on?p.before:p.after;
@@ -146,12 +198,12 @@ bool lights(bool on, bool fullbright=false,int level=15) {
     } return true;
 }
 bool snapshot(std::vector<Graphics>& out,uintptr_t& begin,uintptr_t& end,unsigned visibility) {
-    auto& s=state();begin=get<uintptr_t>(s.base+graphics_vector_rva);end=get<uintptr_t>(s.base+graphics_vector_rva+8);
+    auto& s=state();begin=get<uintptr_t>(s.graphics_vector);end=get<uintptr_t>(s.graphics_vector+8);
     if(end<=begin || (end-begin)%8 || (end-begin)/8>20000 || !readable(begin,end-begin)) return false;
     unsigned ores=0; bool air=false,stone=false;
     for(auto pos=begin;pos<end;pos+=8) {
         const auto object=get<uintptr_t>(pos);
-        if(get<uintptr_t>(object)!=s.base+graphics_vtable_rva || !readable(object,0x80)) return false;
+        if(get<uintptr_t>(object)!=s.graphics_vtable || !readable(object,0x80)) return false;
         const auto block=get<uintptr_t>(object+8), type=get<uintptr_t>(block+0x68);
         char name[160]{};size_t n{};
         if(!name_of(type,name,n)) continue;
@@ -165,15 +217,54 @@ bool snapshot(std::vector<Graphics>& out,uintptr_t& begin,uintptr_t& end,unsigne
     }
     return air && stone && ores>=21;
 }
+bool discover_graphics_registry(ULONGLONG budget=1000) {
+    auto& s=state();const auto* base=reinterpret_cast<const unsigned char*>(s.base);
+    const auto* dos=reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    const auto* nt=reinterpret_cast<const IMAGE_NT_HEADERS64*>(base+dos->e_lfanew);
+    const auto* sections=IMAGE_FIRST_SECTION(nt);
+    const auto deadline=GetTickCount64()+budget;
+    for(unsigned index=s.discovery_section;index<nt->FileHeader.NumberOfSections;++index){const auto& section=sections[index];
+        // The vector is mutable global storage, not executable code or RTTI.
+        // Copy bounded windows once instead of calling VirtualQuery twice per
+        // eight-byte word across hundreds of megabytes during registration.
+        if((section.Characteristics&IMAGE_SCN_MEM_EXECUTE)||!(section.Characteristics&IMAGE_SCN_MEM_WRITE))continue;
+        const auto start=static_cast<uintptr_t>(section.VirtualAddress);
+        const auto size=static_cast<uintptr_t>(section.Misc.VirtualSize);
+        if(start>=s.image_size||size<16)continue;
+        const auto limit=(std::min)(size,s.image_size-start);
+        std::array<unsigned char,65536+16> window{};
+        for(uintptr_t chunk=index==s.discovery_section?s.discovery_offset:0;chunk<limit;chunk+=65536){
+            if(GetTickCount64()>=deadline){s.discovery_section=index;s.discovery_offset=chunk;return false;}
+            const auto length=(std::min<uintptr_t>)(window.size(),limit-chunk);SIZE_T copied{};
+            if(!ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<void*>(s.base+start+chunk),window.data(),length,&copied)||copied!=length)continue;
+        for(uintptr_t offset=0;offset<65536&&offset+24<=length;offset+=8){const auto address=s.base+start+chunk+offset;
+            if((offset&4095)==0&&GetTickCount64()>=deadline){s.discovery_section=index;s.discovery_offset=chunk+offset;return false;}
+            uintptr_t begin{},end{},capacity{};
+            std::memcpy(&begin,window.data()+offset,8);std::memcpy(&end,window.data()+offset+8,8);std::memcpy(&capacity,window.data()+offset+16,8);
+            if(!begin||end<=begin||(end-begin)%8)continue;const auto count=(end-begin)/8;
+            if(capacity<end||capacity-begin>160000||(capacity-begin)%8)continue;
+            if(count<64||count>20000||!readable(begin,(std::min<uintptr_t>)(end-begin,256)))continue;
+            const auto object=get<uintptr_t>(begin);const auto table=get<uintptr_t>(object);
+            if(!object||!table||table<s.base||table>=s.base+s.image_size||!readable(object,0x80))continue;
+            s.graphics_vector=address;s.graphics_vtable=table;
+            std::vector<Graphics> entries;uintptr_t found_begin{},found_end{};
+            if(snapshot(entries,found_begin,found_end,XrayModule::default_visibility))return true;
+            s.graphics_vector=0;s.graphics_vtable=0;
+        }
+        }
+    }
+    s.discovery_section=0;s.discovery_offset=0;
+    return false;
+}
 void exchange_field(uintptr_t p,int value) noexcept { InterlockedExchange(reinterpret_cast<volatile LONG*>(p),value); }
 void restore_graphics() {
     auto& s=state();
     // Match current entries; a world/resource reload may already have destroyed old objects.
-    const auto begin=get<uintptr_t>(s.base+graphics_vector_rva),end=get<uintptr_t>(s.base+graphics_vector_rva+8);
+    const auto begin=get<uintptr_t>(s.graphics_vector),end=get<uintptr_t>(s.graphics_vector+8);
     if(end<begin || end-begin>160000 || !readable(begin,end-begin)) {s.saved.clear();return;}
     for(auto p=begin;p<end;p+=8) {
         const auto object=get<uintptr_t>(p);
-        for(const auto& g:s.saved) if(g.object==object && get<uintptr_t>(object)==s.base+graphics_vtable_rva &&
+        for(const auto& g:s.saved) if(g.object==object && get<uintptr_t>(object)==s.graphics_vtable &&
             get<uintptr_t>(object+8)==g.block && get<uintptr_t>(g.block+0x68)==g.type) {
             // Resource reload can reset fields on the same allocations. Restore only
             // fields still carrying our override; never replace freshly loaded values.
@@ -190,15 +281,19 @@ void __fastcall tick_hook(void* coordinator) {
     auto& s=state();
     {
         std::lock_guard guard(s.mutex);
-        if(get<uintptr_t>(reinterpret_cast<uintptr_t>(coordinator))==s.base+coordinator_vtable_rva) {
+        if(get<uintptr_t>(reinterpret_cast<uintptr_t>(coordinator))==s.coordinator_table) {
+            if(s.native_12650&&!s.graphics_vector&&GetTickCount64()>=s.next_discovery) {
+                s.next_discovery=GetTickCount64()+500;
+                if(discover_graphics_registry(25))Logger::instance().info("x-ray: deferred block registry validated after startup; native terrain controls ready.");
+            }
             const bool xray=s.desired.load();
             const bool fullbright=s.fullbright.load();
             const int level=s.fullbright_level.load();
             const bool requested=xray || fullbright;
             const unsigned visibility=s.visibility.load();
             const bool changed_registry=s.applied.load() &&
-                (get<uintptr_t>(s.base+graphics_vector_rva)!=s.registry_begin || get<uintptr_t>(s.base+graphics_vector_rva+8)!=s.registry_end ||
-                 get<uintptr_t>(s.stone_graphics)!=s.base+graphics_vtable_rva ||
+                (get<uintptr_t>(s.graphics_vector)!=s.registry_begin || get<uintptr_t>(s.graphics_vector+8)!=s.registry_end ||
+                 get<uintptr_t>(s.stone_graphics)!=s.graphics_vtable ||
                  get<int>(s.stone_graphics+16)!=(s.applied_xray ? -1 : 0) ||
                  (s.applied_fullbright && get<int>(s.stone_graphics+20)!=0));
             if(s.applied.load() && (!requested || changed_registry || xray!=s.applied_xray || fullbright!=s.applied_fullbright ||
@@ -221,16 +316,42 @@ void __fastcall tick_hook(void* coordinator) {
                         if(fullbright || (xray && g.retained)) exchange_field(g.object+20,0);
                     }
                     s.applied=true;s.refresh_passes=2;
+                    s.snapshot_failure_logged=false;
                     Logger::instance().info("Terrain lighting: requested x-ray/fullbright graphics applied; rebuilding loaded chunks.");
+                } else if(!s.snapshot_failure_logged) {
+                    s.snapshot_failure_logged=true;
+                    Logger::instance().info("x-ray: enable reached native renderer, but current registry validation failed; terrain left unchanged.");
                 }
             }
             if(s.refresh_passes) {
-                reinterpret_cast<void(__fastcall*)(void*,bool,bool)>(s.base+rebuild_rva)(coordinator,false,false);
+                reinterpret_cast<void(__fastcall*)(void*,bool,bool)>(s.rebuild_target)(coordinator,false,false);
                 --s.refresh_passes;
             }
         }
     }
     s.original(coordinator);
+}
+void adaptive_tick() {
+    auto& s=state();std::lock_guard guard(s.mutex);
+    const bool xray=s.desired.load();const unsigned visibility=s.visibility.load();
+    const bool changed=s.applied.load()&&
+        (get<uintptr_t>(s.graphics_vector)!=s.registry_begin||get<uintptr_t>(s.graphics_vector+8)!=s.registry_end||
+         get<uintptr_t>(s.stone_graphics)!=s.graphics_vtable||get<int>(s.stone_graphics+16)!=(s.applied_xray?-1:0));
+    if(s.applied.load()&&(!xray||changed||visibility!=s.applied_visibility)){
+        restore_graphics();s.applied=false;Logger::instance().info("x-ray: restored 26.50 block graphics.");
+    }
+    if(xray&&!s.applied.load()){
+        std::vector<Graphics> entries;uintptr_t begin{},end{};
+        if(snapshot(entries,begin,end,visibility)){
+            s.applied_xray=true;s.applied_fullbright=false;s.applied_visibility=visibility;
+            s.saved=std::move(entries);s.registry_begin=begin;s.registry_end=end;
+            for(const auto& g:s.saved){char name[160]{};size_t length{};
+                if(name_of(g.type,name,length)&&std::string_view(name,length)=="minecraft:stone")s.stone_graphics=g.object;
+                if(!g.retained)exchange_field(g.object+16,-1);else exchange_field(g.object+20,0);
+            }
+            s.applied=true;Logger::instance().info("x-ray: Minecraft 1.26.5101.0 block graphics applied; existing chunk meshes refresh as Bedrock rebuilds them.");
+        }
+    }
 }
 bool install() {
     auto& s=state();std::lock_guard guard(s.mutex);if(s.installed) return true;
@@ -238,16 +359,44 @@ bool install() {
     s.base=reinterpret_cast<uintptr_t>(image);
     const auto dos=reinterpret_cast<const IMAGE_DOS_HEADER*>(image);
     const auto nt=reinterpret_cast<const IMAGE_NT_HEADERS64*>(s.base+dos->e_lfanew);
-    if(dos->e_magic!=IMAGE_DOS_SIGNATURE || nt->Signature!=IMAGE_NT_SIGNATURE ||
-       nt->FileHeader.TimeDateStamp!=0x6A8378BA || nt->OptionalHeader.SizeOfImage!=0x12888000) return false;
+    if(dos->e_magic!=IMAGE_DOS_SIGNATURE || nt->Signature!=IMAGE_NT_SIGNATURE)return false;
+    s.image_size=nt->OptionalHeader.SizeOfImage;
+    uintptr_t selected_tick=s.base+tick_rva;
+    std::array<unsigned char,19> selected_bytes=tick_bytes;
+    if(nt->FileHeader.TimeDateStamp==0x6AA482FD&&s.image_size==0x12C01000){
+        // Identified from this exact mapped executable: native diagnostic-string
+        // xrefs, unwind boundaries, constructor vtable write and renderer callers.
+        // Apply/restore/rebuild on the engine's coordinator update, never on the
+        // overlay thread. Stack-only stolen instructions need no RIP relocation.
+        selected_tick=s.base+0x1C9D140;selected_bytes[15]=0x48;
+        s.coordinator_table=s.base+0xE7D5B80;s.rebuild_target=s.base+0x1C9C6D0;
+        constexpr unsigned char rebuild_bytes[]{0x55,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x56,0x57,0x53,0x48,0x83,0xEC,0x78,0x48,0x8D,0x6C,0x24,0x70};
+        constexpr unsigned char tick_call[]{0x48,0x8B,0x4B,0x18,0xE8,0x27,0x87,0x4A,0xFD};
+        constexpr unsigned char rebuild_call[]{0x48,0x8B,0x4F,0x18,0x31,0xD2,0x45,0x31,0xC0,0xE8,0xE2,0xF2,0x40,0x01};
+        if(std::memcmp(reinterpret_cast<void*>(selected_tick),selected_bytes.data(),selected_bytes.size())){Logger::instance().info("x-ray: native tick prologue mismatch (possible existing hook).");return false;}
+        if(std::memcmp(reinterpret_cast<void*>(s.rebuild_target),rebuild_bytes,sizeof(rebuild_bytes))){Logger::instance().info("x-ray: native rebuild prologue mismatch.");return false;}
+        if(get<uintptr_t>(s.coordinator_table)!=s.base+0x1CBABF0){Logger::instance().info("x-ray: coordinator vtable mismatch.");return false;}
+        if(std::memcmp(reinterpret_cast<void*>(s.base+0x47F4A10),tick_call,sizeof(tick_call))||
+           std::memcmp(reinterpret_cast<void*>(s.base+0x88D3E0),rebuild_call,sizeof(rebuild_call))){Logger::instance().info("x-ray: renderer caller mismatch.");return false;}
+        if(!discover_graphics_registry())Logger::instance().info("x-ray: registry not ready at attach; native tick will retry bounded read-only discovery instead of permanently reporting N/A.");
+        s.native_12650=true;
+        s.native_lighting_verified=validate_native_lighting();
+        Logger::instance().info(s.native_lighting_verified?
+            "Fullbright: exact 26.50 mesh and scalar/vector/End light-lookup sites verified; reversible light levels 9-15 available.":
+            "Fullbright unavailable: 26.50 lighting profile mismatch; working X-ray remains available without lighting patches.");
+    } else {
+    if(nt->FileHeader.TimeDateStamp!=0x6A8378BA || s.image_size!=0x12888000) return false;
+    s.graphics_vector=s.base+graphics_vector_rva;s.graphics_vtable=s.base+graphics_vtable_rva;
+    s.coordinator_table=s.base+coordinator_vtable_rva;s.rebuild_target=s.base+rebuild_rva;
     if(std::memcmp(reinterpret_cast<void*>(s.base+tick_rva),tick_bytes.data(),tick_bytes.size()) ||
        get<uintptr_t>(s.base+coordinator_vtable_rva)!=s.base+0x99711A0 ||
        std::memcmp(reinterpret_cast<void*>(s.base+rebuild_rva),"\x55\x41\x57\x41\x56\x41\x55\x41\x54\x56\x57\x53\x48\x81\xEC\x88\x00\x00\x00",19)) return false;
     for(const auto& p:texture_patches) if(std::memcmp(reinterpret_cast<void*>(s.base+p.rva),p.before.data(),p.size)) return false;
     for(const auto& p:light_patches) if(std::memcmp(reinterpret_cast<void*>(s.base+p.rva),p.before.data(),p.size)) return false;
+    }
     auto trampoline=static_cast<unsigned char*>(VirtualAlloc(nullptr,64,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE));
     if(!trampoline) return false;
-    std::memcpy(trampoline,tick_bytes.data(),tick_bytes.size());jump(trampoline+19,s.base+tick_rva+19);
+    std::memcpy(trampoline,selected_bytes.data(),selected_bytes.size());jump(trampoline+19,selected_tick+19);
     DWORD ignored{};if(!VirtualProtect(trampoline,64,PAGE_EXECUTE_READ,&ignored)) {VirtualFree(trampoline,0,MEM_RELEASE);return false;}
     FlushInstructionCache(GetCurrentProcess(),trampoline,64);
     std::array<unsigned char,19> patch{};patch.fill(0x90);jump(patch.data(),reinterpret_cast<uintptr_t>(&tick_hook));
@@ -256,10 +405,12 @@ bool install() {
         reinterpret_cast<LPCWSTR>(&tick_hook),&pinned)) {VirtualFree(trampoline,0,MEM_RELEASE);return false;}
     s.original=reinterpret_cast<Tick>(trampoline);
     bool success=false;
-    {PausedThreads paused;if(paused.outside(s.base+tick_rva,19)) success=write_code(s.base+tick_rva,patch.data(),patch.size());}
+    {PausedThreads paused;if(paused.outside(selected_tick,19)) success=write_code(selected_tick,patch.data(),patch.size());}
     if(!success) {s.original=nullptr;VirtualFree(trampoline,0,MEM_RELEASE);return false;}
     s.installed=true;
-    Logger::instance().info("x-ray: Minecraft 1.26.4501.0 coordinator hook installed.");return true;
+    Logger::instance().info(s.native_12650?
+        "x-ray: Minecraft 1.26.5101.0 native coordinator hook installed; engine-thread apply, restore and loaded-chunk rebuild connected.":
+        "x-ray: Minecraft 1.26.4501.0 coordinator hook installed.");return true;
 }
 } // namespace
 bool XrayModule::available() const noexcept { return state().installed.load(); }
@@ -270,14 +421,22 @@ void XrayModule::set_boolean_setting(std::size_t index, bool value) noexcept {
     if(value) visibility_.fetch_or(bit); else visibility_.fetch_and(~bit);
     if(enabled()) state().visibility=visibility_.load();
 }
-void XrayModule::on_enable() { state().visibility=visibility_.load();state().desired=true; }
-void XrayModule::on_disable() { state().desired=false; }
-XrayModule::~XrayModule() {state().desired=false;}
+void XrayModule::on_enable() { state().visibility=visibility_.load();state().desired=true;Logger::instance().info("x-ray: enable requested; waiting for native terrain update."); }
+void XrayModule::on_disable() {
+    auto& s=state();s.desired=false;
+    Logger::instance().info("x-ray: disable requested; native terrain update will restore and rebuild.");
+    // Disabled modules do not receive on_tick. Restore adaptive overrides now,
+    // rather than leaving terrain modified until a later re-enable.
+    if(s.adaptive_12650){std::lock_guard guard(s.mutex);if(s.applied){restore_graphics();s.applied=false;}}
+}
+void XrayModule::on_tick() noexcept { if(state().adaptive_12650) adaptive_tick(); }
+XrayModule::~XrayModule() {on_disable();}
 } // namespace utility::modules
 
 namespace utility::integration::terrain_lighting {
 bool initialize() { return utility::modules::install(); }
-bool available() noexcept { return utility::modules::state().installed.load(); }
+bool available() noexcept { const auto& s=utility::modules::state();return s.installed.load()&&!s.adaptive_12650&&(!s.native_12650||s.native_lighting_verified); }
 void set_fullbright_level(int level) noexcept { utility::modules::state().fullbright_level=std::clamp(level,9,15); }
 void set_fullbright(bool enabled) noexcept { utility::modules::state().fullbright=enabled; }
 }
+
