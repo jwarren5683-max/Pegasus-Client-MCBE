@@ -40,5 +40,5 @@ The current source includes unfinished navigation development, which remains dis
 
 ## Verification
 
-The clean rebuilt DLL passes all 20 tests, including a separately compiled Reach allocation-canary test, exact 1.26.50 build classification, X-ray lifecycle, Fullbright restoration, Auto Leave threshold/one-shot behavior, remote-server policy, entity reach, Trigger Bot local input dispatch, focus loss, and menu interaction. The unsafe re-entrant native attack call was removed after repeatable crash reports. These checks do not override server authority or certify native behavior on every Minecraft version; live post-repair stability still requires verification.
+The clean rebuilt DLL passes all 25 tests, including the exact 1.26.50 chat profile and ABI layouts, command isolation, a separately compiled Reach allocation-canary test, exact build classification, X-ray lifecycle, Fullbright restoration, Auto Leave threshold/one-shot behavior, remote-server policy, entity reach, focus loss, and menu interaction. Release verification also injects the hash-pinned DLL into the exact 1.26.5101.0 client and confirms that the game remains responsive while the chat and working-module hooks initialize. These checks do not override server authority or certify native behavior on other Minecraft versions.
 

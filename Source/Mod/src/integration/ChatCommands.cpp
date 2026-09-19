@@ -1,5 +1,7 @@
 #include "ChatCommands.hpp"
+#include "ChatCompatibility.hpp"
 #include "GameContext.hpp"
+#include "NativeChat.hpp"
 #include "../framework/ModuleManager.hpp"
 #include "../framework/Logger.hpp"
 #include "../framework/ChatStyle.hpp"
@@ -13,12 +15,8 @@ namespace {
 using Byte = unsigned char;
 using Submit = void(__fastcall*)(void*);
 // Minecraft uses the release MSVC string ABI even when this DLL is Debug.
-struct NativeString {
-    union { char text[16]; char* pointer; } data{};
-    std::size_t size{}, capacity{15};
-};
-static_assert(sizeof(NativeString)==32);
-struct OptionalString { NativeString value; bool present{}; Byte padding[7]{}; };
+using NativeString = native_chat::NativeString;
+using OptionalString = native_chat::OptionalString;
 using Display = void(__fastcall*)(void*,const NativeString*,const OptionalString*,bool);
 Submit original_submit{};
 Display display_message{};
@@ -26,6 +24,7 @@ ModuleManager* manager{};
 bool chat_passthrough{};
 std::mutex callback_mutex;
 Byte* image{};
+const chat_compat::Profile* active_profile{};
 
 template<class T> T read(const void* object, std::size_t offset=0) {
     T value{};
@@ -35,12 +34,18 @@ template<class T> T read(const void* object, std::size_t offset=0) {
 }
 void reply(void* controller, const std::string& text) {
     auto* model=read<void*>(controller,0xD48);
+    const std::string prefixed=chat_style::line(text);
+    if (active_profile == &chat_compat::release_12650) {
+        auto* validity=read<void*>(model,0x48);
+        if (!validity || !read<bool>(validity)) return;
+        native_chat::display_12650(model,0x58,prefixed.c_str());
+        return;
+    }
     auto* control=read<void*>(model,0x40);
     if (!read<bool>(control)) return;
     auto* client=read<void*>(model,0x50);
     auto* chat=read<void*>(client,0x648);
     if (!chat || !display_message) return;
-    const std::string prefixed=chat_style::line(text);
     NativeString message; message.size=prefixed.size();
     if (message.size<16) std::memcpy(message.data.text,prefixed.data(),message.size);
     else { message.data.pointer=const_cast<char*>(prefixed.c_str()); message.capacity=message.size; }
@@ -54,7 +59,7 @@ void __fastcall submit_hook(void* controller) {
     // so clipboard, history, keyboard layout and IME do not bypass interception.
     auto* field=static_cast<Byte*>(controller)+0xD60;
     const auto native=read<NativeString>(field);
-    char* data=native.capacity>=16 ? native.data.pointer : reinterpret_cast<char*>(field);
+    char* data=native.capacity>=16 ? const_cast<char*>(native.data.pointer) : reinterpret_cast<char*>(field);
     if (!native.size || !readable_game_memory(data,1) || data[0]!=Commands::prefix) {
         original_submit(controller); return;
     }
@@ -153,37 +158,41 @@ bool install_chat_commands(ModuleManager& modules) noexcept {
     const auto dos=read<IMAGE_DOS_HEADER>(image);
     if (dos.e_magic!=IMAGE_DOS_SIGNATURE || dos.e_lfanew<0 || dos.e_lfanew>4096) return false;
     const auto nt=read<IMAGE_NT_HEADERS64>(image,dos.e_lfanew);
-    if (nt.Signature!=IMAGE_NT_SIGNATURE || nt.FileHeader.TimeDateStamp!=0x6A8378BA || nt.OptionalHeader.SizeOfImage!=0x12888000) return false;
-    auto* target=image+0x4B41070;
-    constexpr Byte signature[]{0x55,0x41,0x57,0x41,0x56,0x56,0x57,0x53,0x48,0x81,0xEC,0xD8,0,0,0};
-    // Confirm the input field and downstream normal-chat send call as well as prologue.
-    constexpr Byte field[]{0x48,0x8D,0xB9,0x60,0x0D,0,0};
-    constexpr Byte send[]{0xE8,0xA5,0x71,0xF0,0xFC};
-    if (std::memcmp(target,signature,sizeof(signature)) || std::memcmp(image+0x4B4109D,field,sizeof(field)) ||
-        std::memcmp(image+0x4B41386,send,sizeof(send))) return false;
+    if (nt.Signature!=IMAGE_NT_SIGNATURE) return false;
+    const auto* profile=chat_compat::select(nt.FileHeader.TimeDateStamp,nt.OptionalHeader.SizeOfImage);
+    if (!profile || !chat_compat::matches(image,*profile)) return false;
+    if (profile==&chat_compat::release_12650 &&
+        (std::memcmp(image+profile->display_rva,chat_compat::display_12650_signature.data(),
+            chat_compat::display_12650_signature.size()) ||
+         std::memcmp(image+chat_compat::controller_12650_signature_rva,
+            chat_compat::controller_12650_signature.data(),chat_compat::controller_12650_signature.size()))) return false;
+    auto* target=image+profile->submit_rva;
+    const auto signature_size=profile->submit_signature.size();
     auto* trampoline=static_cast<Byte*>(VirtualAlloc(nullptr,64,MEM_RESERVE|MEM_COMMIT,PAGE_READWRITE));
     if (!trampoline) return false;
     const auto jump=[](Byte* at,void* to){const Byte op[]{0xFF,0x25,0,0,0,0};std::memcpy(at,op,6);std::memcpy(at+6,&to,8);};
-    std::memcpy(trampoline,target,sizeof(signature));jump(trampoline+sizeof(signature),target+sizeof(signature));
+    std::memcpy(trampoline,target,signature_size);jump(trampoline+signature_size,target+signature_size);
     DWORD protection{};
     if (!VirtualProtect(trampoline,64,PAGE_EXECUTE_READ,&protection)) { VirtualFree(trampoline,0,MEM_RELEASE);return false; }
-    FlushInstructionCache(GetCurrentProcess(),trampoline,29);
+    FlushInstructionCache(GetCurrentProcess(),trampoline,signature_size+14);
     HMODULE pinned{};
     if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,
             reinterpret_cast<LPCWSTR>(&submit_hook),&pinned)) {VirtualFree(trampoline,0,MEM_RELEASE);return false;}
     bool installed=false;
     {
         ChatSuspendedThreads guard;
-        if (guard.valid() && guard.outside(target,sizeof(signature)) &&
-            VirtualProtect(target,sizeof(signature),PAGE_EXECUTE_READWRITE,&protection)) {
+        if (guard.valid() && guard.outside(target,signature_size) &&
+            VirtualProtect(target,signature_size,PAGE_EXECUTE_READWRITE,&protection)) {
             {
                 manager=&modules;
-                display_message=reinterpret_cast<Display>(image+0x16DA850);
+                active_profile=profile;
+                display_message=profile==&chat_compat::release_12645 ?
+                    reinterpret_cast<Display>(image+profile->display_rva) : nullptr;
                 original_submit=reinterpret_cast<Submit>(trampoline);
                 jump(target,reinterpret_cast<void*>(&submit_hook));target[14]=0x90;
-                FlushInstructionCache(GetCurrentProcess(),target,sizeof(signature));installed=true;
+                FlushInstructionCache(GetCurrentProcess(),target,signature_size);installed=true;
             }
-            DWORD ignored{};VirtualProtect(target,sizeof(signature),protection,&ignored);
+            DWORD ignored{};VirtualProtect(target,signature_size,protection,&ignored);
         }
     }
     if (!installed) VirtualFree(trampoline,0,MEM_RELEASE);

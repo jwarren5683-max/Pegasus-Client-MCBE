@@ -87,6 +87,9 @@ inline void observe_crosshair(void* player, void* hit) noexcept {
 
 inline void clear_game_context() noexcept {
     game_context_detail::crosshair_time.store(0);
+    game_context_detail::crosshair_player.store(nullptr, std::memory_order_release);
+    game_context_detail::crosshair_hit.store(nullptr, std::memory_order_release);
+    game_context_detail::picker_ready.store(false, std::memory_order_release);
     game_context_detail::player.store(nullptr, std::memory_order_release);
 }
 

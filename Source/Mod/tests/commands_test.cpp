@@ -83,7 +83,14 @@ int main() {
         std::memcpy(coordinate_player.data()+0x218,&coordinate_state_ptr,sizeof(coordinate_state_ptr));
         integration::game_context_detail::player.store(coordinate_player.data(),std::memory_order_release);
         require(execute(".copy coords")[0].starts_with("Copied") && clipboard.back()=="12.50 64.25 -33.75","copy coords clipboard");
+        integration::game_context_detail::crosshair_player.store(coordinate_player.data());
+        integration::game_context_detail::crosshair_hit.store(coordinate_state.data());
+        integration::game_context_detail::crosshair_time.store(42);
+        integration::game_context_detail::picker_ready.store(true);
         integration::clear_game_context();
+        require(!integration::current_player() && !integration::game_context_detail::crosshair_player.load() &&
+            !integration::game_context_detail::crosshair_hit.load() && !integration::game_context_detail::crosshair_time.load() &&
+            !integration::game_context_detail::picker_ready.load(),"game context cleanup retained stale pointers");
         require(execute(".binds")[0]=="No key bindings.","empty binds feedback");
         require(execute(".copy binds")[0].find("No key bindings")!=std::string::npos,"copy empty binds");
         require(execute(".binds extra")[0].starts_with("Usage: .binds"),"binds arity");

@@ -1,4 +1,5 @@
 #include "GameplayModules.hpp"
+#include "../integration/NativeChat.hpp"
 #include "EspProjection.hpp"
 #include "EspSnapshot.hpp"
 #include "TriggerbotPolicy.hpp"
@@ -546,12 +547,12 @@ struct GameString { union { char text[16]; const char* pointer; }; std::size_t s
 };
 struct OptionalString { GameString value; bool present{}; Byte padding[7]{}; };
 bool local_chat_supported_build(const integration::BedrockBuildInfo& build) noexcept {
-    // The release-12645 display target is known. 26.50 changed native chat
-    // internals and its display ABI/RVA has not been independently verified.
-    return integration::is_release_12645(build);
+    return integration::is_release_12645(build) || integration::is_release_12650(build);
 }
 bool local_chat(void* player, const char* text) {
     if(!player||!text||!local_chat_supported_build(integration::current_bedrock_build())) return false;
+    if(integration::is_release_12650(integration::current_bedrock_build()))
+        return integration::native_chat::display_12650(player,0xD70,text);
     auto* chat=read<void*>(read<void*>(player,0xD70),0x648);
     if(!chat||!integration::readable_game_memory(chat,sizeof(void*))) return false;
     using Display=void(__fastcall*)(void*,const GameString*,const OptionalString*,bool);
@@ -1193,7 +1194,7 @@ void initialize() {
         auto_bridge_ready=true;
         Logger::instance().info("Auto Bridge: 26.50 local tick connected; guarded input-assist candidate ready (V+W+Space, look down).");
         Logger::instance().info("ESP: 26.50 read-only packed snapshots connected to validated native local tick; waiting for local registry and camera validation. No native actor-list calls.");
-        Logger::instance().info("Local chat display disabled on 26.50: native display target is unverified; startup and Death Position chat messages fail closed.");
+        Logger::instance().info("Local chat display: exact 26.50 GuiData acquisition slot, display ABI/RVA, and cleanup verified.");
         constexpr Byte leave_prologue[]{0x55,0x56,0x57,0x48,0x81,0xEC,0x00,0x01,0x00,0x00,0x48,0x8D,0xAC,0x24,0x80,0x00,0x00,0x00};
         constexpr Byte component_stride[]{0x4B,0x8D,0x04,0x80,0xC1,0xE0,0x04,0x48,0x01,0xC1};
         constexpr Byte instance_stride[]{0x4D,0x89,0xD0,0x4D,0x29,0xC8,0x4D,0x89,0xC1,0x49,0xC1,0xE1,0x05,0x4F,0x8D,0x04,0x41,0x4C,0x03,0x41,0x18};

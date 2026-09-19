@@ -11,23 +11,23 @@ Minecraft `1.26.5101.0` (Bedrock 26.50) is now recognized by an exact executable
 - Trigger Bot no longer calls `GameMode::attack` from inside the player tick. It emits a spaced left-button press only in an integrated/local world while Minecraft is foreground and gameplay input is active.
 - **Auto Leave** appears under Combat. Its slider selects a threshold from 0.5 to 10 hearts in half-heart steps (default 4). Two valid low-health ticks trigger Bedrock's normal asynchronous leave flow once, returning to the world list without closing Minecraft.
 - On remote servers, Fullbright, ArrayList, and Auto Leave remain available; combat automation, reach, X-ray, movement modification, ESP, Ghost Hand, and Baritone do not. Server rules remain authoritative, including rules about automatic actions.
-- Phase module doesn't work, and the speed module works but is janky.
-- Death Position is supported on Minecraft 26.50 using the validated local health and player-bounds data. On 26.50 it still logs/copies the coordinates, while the local chat message stays disabled until the native chat display target is verified.
+- Phase and Speed remain `N/A` on 26.50 because their old native layouts have not been verified.
+- Death Position is supported on Minecraft 26.50 using validated local health and player-bounds data. It logs, copies, and displays the coordinates in local chat.
 - You can type '.help' in the chat while the client is loaded in your game and it will show you some commands the client provides.
 - Type '.loki' to show the current Loki build and the features confirmed working on 26.50.
 - Type '.seed' to show the signed 64-bit seed currently exposed to the client. Remote servers may expose `0` or another server-provided value.
 - Type '.binds' to list the Loki modules currently assigned to keys and whether each binding is toggle or keyhold.
 - Use '.copy seed', '.copy coords', or '.copy binds' to place that Loki information directly on the Windows clipboard.
-- On the legacy 26.45 profile, Loki displays `[Loki] Loaded` once in local chat. On 26.50 this native chat notice is disabled until the display target is independently verified, preventing an unsafe native call.
+- Loki displays `[Loki] Loaded` once after the local player and 26.50 chat UI are ready. The chat submit target, controller/input layout, `GuiData` acquisition, display ABI/RVA, and native reference cleanup are exact-build gated.
 - Server restrictions remain authoritative. This build does not attempt to evade anti-cheat or server-side validation.
 - I am trying to add a baritone style autominer to the client but its not ready yet. I also would like to add many more modules in the future.
-- If the client breaks, restart minecraft. This shouldn't happen in most circumstances. It can happen if you eject and re-inject the client however. 
+- `.eject` deactivates modules, restores ordinary period-prefixed chat passthrough, clears cached player/UI pointers, and stops the overlay. Native callback code remains pinned for process safety, so restart Minecraft before loading a different DLL or injecting again.
 - Feel free to use the hooks in this client and the reverse engineering research I've done to help you develop your own clients.
 
 ## Start
 
 1. Keep `Pegasus.exe` and `BedrockUtilityFramework.Xray.dll` together in this folder.
-2. Start a fresh Minecraft Bedrock 64-bit session. Native hooks remain signature-gated. Minecraft 1.26.4501.0 is the last fully verified native profile; 1.26.5101.0 is recognized and under active staged repair.
+2. Start a fresh Minecraft Bedrock 64-bit session. Native hooks remain signature-gated. This build targets Minecraft `1.26.5101.0` / 26.50 while retaining the legacy 26.45 profile.
 3. Open `Pegasus.exe`. Select your game session, then choose **Load utility mod**. Use Refresh if you started Minecraft afterward.
 4. In a Minecraft world, press **Tab** for the menu (clickgui) or use the arrow keys to activate modules.
 
