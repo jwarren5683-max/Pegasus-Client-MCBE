@@ -12,6 +12,7 @@ Minecraft `1.26.5101.0` (Bedrock 26.50) is now recognized by an exact executable
 - **Auto Leave** appears under Combat. Its slider selects a threshold from 0.5 to 10 hearts in half-heart steps (default 4). Two valid low-health ticks trigger Bedrock's normal asynchronous leave flow once, returning to the world list without closing Minecraft.
 - On remote servers, Fullbright, ArrayList, and Auto Leave remain available; combat automation, reach, X-ray, movement modification, ESP, Ghost Hand, and Baritone do not. Server rules remain authoritative, including rules about automatic actions.
 - Phase module doesn't work, and the speed module works but is janky.
+- Death Position is supported on Minecraft 26.50 using the validated local health and player-bounds data.
 - You can type '.help' in the chat while the client is loaded in your game and it will show you some commands the client provides.
 - Type '.loki' to show the current Loki build and the features confirmed working on 26.50.
 - Type '.seed' to show the signed 64-bit seed currently exposed to the client. Remote servers may expose `0` or another server-provided value.
