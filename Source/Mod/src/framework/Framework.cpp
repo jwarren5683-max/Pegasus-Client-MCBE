@@ -89,6 +89,7 @@ bool Framework::initialize(HMODULE module) noexcept {
     Logger::instance().info(integration::install_chat_commands(modules_)
         ? "Local period commands installed: .help, .keybind, .unbind and .eject."
         : "Local commands unavailable: unsupported chat signature or hook installation failed.");
+    modules::arm_startup_notice();
     return true;
 }
 
@@ -97,6 +98,7 @@ void Framework::shutdown() noexcept {
         return;
     }
 
+    modules::disarm_startup_notice();
     integration::stop_chat_commands(true);
     renderer_.shutdown();
     splash_text_hook_.uninstall();
