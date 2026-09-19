@@ -2,11 +2,15 @@
 #include "ChatStyle.hpp"
 #include "ModuleManager.hpp"
 #include "../integration/NavigationBridge.hpp"
+#include "../integration/GameContext.hpp"
 #include "../integration/WorldSeed.hpp"
 #include <Windows.h>
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
 
 namespace utility {
 namespace {
@@ -80,6 +84,42 @@ std::string key_name(unsigned code) {
     if(code>=VK_NUMPAD0&&code<=VK_NUMPAD9) return "Numpad"+std::to_string(code-VK_NUMPAD0);
     return "VK "+std::to_string(code);
 }
+bool system_clipboard_write(std::string_view text) {
+    if(text.empty()) return false;
+    const int chars=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),nullptr,0);
+    if(chars<=0) return false;
+    const auto bytes=(static_cast<std::size_t>(chars)+1)*sizeof(wchar_t);
+    HGLOBAL memory=GlobalAlloc(GMEM_MOVEABLE,bytes);
+    if(!memory) return false;
+    auto* data=static_cast<wchar_t*>(GlobalLock(memory));
+    if(!data){GlobalFree(memory);return false;}
+    const int written=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),data,chars);
+    if(written!=chars){GlobalUnlock(memory);GlobalFree(memory);return false;}
+    data[chars]=L'\0';
+    GlobalUnlock(memory);
+    if(!OpenClipboard(nullptr)){GlobalFree(memory);return false;}
+    bool ok=false;
+    if(EmptyClipboard()) ok=SetClipboardData(CF_UNICODETEXT,memory)!=nullptr;
+    CloseClipboard();
+    if(!ok) GlobalFree(memory);
+    return ok;
+}
+bool current_coordinates_text(std::string& text) {
+    void* player=integration::current_player();
+    if(!integration::readable_game_memory(player,0x220)) return false;
+    void* state{};
+    std::memcpy(&state,static_cast<std::byte*>(player)+0x218,sizeof(state));
+    if(!integration::readable_game_memory(state,sizeof(float)*3)) return false;
+    float xyz[3]{};
+    std::memcpy(xyz,state,sizeof(xyz));
+    if(!std::isfinite(xyz[0])||!std::isfinite(xyz[1])||!std::isfinite(xyz[2])) return false;
+    char buffer[96]{};
+    const int size=std::snprintf(buffer,sizeof(buffer),"%.2f %.2f %.2f",
+        static_cast<double>(xyz[0]),static_cast<double>(xyz[1]),static_cast<double>(xyz[2]));
+    if(size<=0||static_cast<std::size_t>(size)>=sizeof(buffer)) return false;
+    text.assign(buffer,static_cast<std::size_t>(size));
+    return true;
+}
 constexpr auto usage = "Usage: .keybind <module> <key> <toggle|keyhold> (quote names containing spaces).";
 }
 bool Commands::execute(std::string_view text, ModuleManager& modules, std::vector<std::string>& replies) {
@@ -109,6 +149,7 @@ bool Commands::execute(std::string_view text, ModuleManager& modules, std::vecto
             replies.emplace_back(std::string(chat_style::aqua)+".keybind "+chat_style::white+"<module> <key> <toggle|keyhold>"+chat_style::gray+" - Bind a module; quote spaced names.");
             replies.emplace_back(std::string(chat_style::aqua)+".unbind "+chat_style::white+"<module>"+chat_style::gray+" - Remove all key bindings for a module.");
             replies.emplace_back(std::string(chat_style::aqua)+".binds"+chat_style::gray+" - List current Loki key bindings.");
+            replies.emplace_back(std::string(chat_style::aqua)+".copy "+chat_style::white+"<seed|coords|binds>"+chat_style::gray+" - Copy Loki info to the Windows clipboard.");
             replies.emplace_back(std::string(chat_style::aqua)+".eject"+chat_style::gray+" - Disable the mod for this session.");
             for (const auto& module : modules.modules())
                 for (const auto& line : module->command_help())
@@ -146,6 +187,51 @@ bool Commands::execute(std::string_view text, ModuleManager& modules, std::vecto
                 chat_style::gray+" -> "+chat_style::aqua+key_name(binding.key)+chat_style::gray+
                 " ("+(binding.hold?"keyhold":"toggle")+")");
         }
+        return true;
+    }
+    if (name == "copy") {
+        if(args.size()!=2) { replies.emplace_back("Usage: .copy <seed|coords|binds>."); return true; }
+        const auto what=lower(args[1]);
+        std::string text;
+        if(what=="seed") {
+            std::int64_t seed{};
+            if(!integration::current_world_seed(seed)) {
+                replies.emplace_back("World seed is not available yet.");
+                return true;
+            }
+            text=std::to_string(seed);
+        } else if(what=="coords") {
+            if(!current_coordinates_text(text)) {
+                replies.emplace_back("Coordinates are not available yet.");
+                return true;
+            }
+        } else if(what=="binds") {
+            std::lock_guard lock(mutex_);
+            if(bindings_.empty()) {
+                replies.emplace_back("No key bindings to copy.");
+                return true;
+            }
+            for(std::size_t i=0;i<bindings_.size();++i) {
+                const auto& binding=bindings_[i];
+                if(i) text+="\r\n";
+                text+=std::string(binding.module->name())+" -> "+key_name(binding.key)+
+                    " ("+(binding.hold?"keyhold":"toggle")+")";
+            }
+        } else {
+            replies.emplace_back("Usage: .copy <seed|coords|binds>.");
+            return true;
+        }
+        std::function<bool(std::string_view)> writer;
+        {
+            std::lock_guard lock(mutex_);
+            writer=clipboard_writer_;
+        }
+        const bool copied=writer?writer(text):system_clipboard_write(text);
+        if(!copied) {
+            replies.emplace_back("Could not access the Windows clipboard. Try again.");
+            return true;
+        }
+        replies.emplace_back(std::string(chat_style::green)+"Copied "+chat_style::aqua+what+chat_style::green+" to clipboard.");
         return true;
     }
     if (name == "eject") {
@@ -202,6 +288,10 @@ bool Commands::execute(std::string_view text, ModuleManager& modules, std::vecto
 void Commands::set_eject_handler(std::function<bool()> handler) {
     std::lock_guard lock(mutex_); eject_handler_=std::move(handler); eject_pending_=false;
 }
+void Commands::set_clipboard_writer(std::function<bool(std::string_view)> writer) {
+    std::lock_guard lock(mutex_);
+    clipboard_writer_=std::move(writer);
+}
 void Commands::key(unsigned code, bool down, bool gameplay) {
     if (code >= pressed_.size()) return;
     std::lock_guard lock(mutex_);
@@ -224,6 +314,6 @@ void Commands::suspend() {
 }
 void Commands::clear() {
     suspend();
-    std::lock_guard lock(mutex_); bindings_.clear(); pressed_.fill(false); eject_handler_={}; eject_pending_=false;
+    std::lock_guard lock(mutex_); bindings_.clear(); pressed_.fill(false); eject_handler_={}; clipboard_writer_={}; eject_pending_=false;
 }
 }
