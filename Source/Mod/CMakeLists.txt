@@ -177,6 +177,12 @@ add_executable(BedrockEspReadOnlyProbe EXCLUDE_FROM_ALL ../../tools/bedrock-esp-
 target_compile_features(BedrockEspReadOnlyProbe PRIVATE cxx_std_20)
 target_compile_definitions(BedrockEspReadOnlyProbe PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 if(BUILD_TESTING)
+    # Release builds define NDEBUG, which would otherwise compile assert()-based
+    # test checks out. This applies only to test targets created below; the
+    # production DLL was already defined above and remains a normal Release build.
+    if(MSVC)
+        add_compile_options(/UNDEBUG)
+    endif()
     add_executable(BedrockChestEspTest tests/chest_esp_test.cpp)
     target_compile_features(BedrockChestEspTest PRIVATE cxx_std_20)
     target_compile_definitions(BedrockChestEspTest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
