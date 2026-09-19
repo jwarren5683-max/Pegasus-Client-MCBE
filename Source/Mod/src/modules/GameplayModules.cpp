@@ -11,6 +11,7 @@
 #include "ChestEspContainers.hpp"
 #include "../integration/GameContext.hpp"
 #include "../integration/WorldSeed.hpp"
+#include "../integration/WorldSeed12650.hpp"
 #include "../integration/NavigationBridge.hpp"
 #include "../integration/ServerSafety.hpp"
 #include "../integration/NavigationNativeLayout.hpp"
@@ -179,12 +180,11 @@ bool executable_game_code(const void* address) {
 }
 
 // Current 26.50 IBlockSource ABI: the already-verified getChunk(ChunkPos)
-// slot is followed by getLevel(), getILevel(), then getLevelSeed64().
+// slot is followed by level accessors. Slot +0x160 returns Level*; it does
+// not return the seed. The exact Level::getSeed helper uses an sret buffer.
 constexpr std::size_t block_source_get_chunk_slot_12650=0x148;
-constexpr std::size_t block_source_get_seed_slot_12650=0x160;
-static_assert(block_source_get_seed_slot_12650==block_source_get_chunk_slot_12650+3*sizeof(void*));
-struct LevelSeed64Abi { std::uint64_t value; };
-static_assert(sizeof(LevelSeed64Abi)==sizeof(std::uint64_t));
+static_assert(integration::world_seed_12650::block_source_get_level_slot==
+    block_source_get_chunk_slot_12650+3*sizeof(void*));
 
 bool seed_looks_like_process_pointer(std::uint64_t value) noexcept {
     if(value<0x10000ULL||value>0x00007FFFFFFFFFFFULL)return false;
@@ -212,26 +212,50 @@ void refresh_world_seed_12650(void* player) noexcept {
     auto* region=read<void*>(dimension,0xF0);
     auto* table=read<void**>(region);
     if(!region||!table||read<void*>(table,block_source_get_chunk_slot_12650)!=image+profile->get_chunk) return;
-    using GetSeed=LevelSeed64Abi(__fastcall*)(void*);
-    const auto get_seed=read<GetSeed>(table,block_source_get_seed_slot_12650);
-    if(!executable_game_code(reinterpret_cast<void*>(get_seed))) return;
+    using GetLevel=void*(__fastcall*)(void*);
+    using GetSeed=integration::world_seed_12650::LevelSeed64Abi*(__fastcall*)(
+        void*,integration::world_seed_12650::LevelSeed64Abi*);
+    const auto get_level=read<GetLevel>(table,integration::world_seed_12650::block_source_get_level_slot);
+    const auto get_seed=reinterpret_cast<GetSeed>(image+integration::world_seed_12650::level_get_seed_rva);
+    if(reinterpret_cast<Byte*>(get_level)!=image+integration::world_seed_12650::block_source_get_level_rva||
+       std::memcmp(image+integration::world_seed_12650::block_source_get_level_rva,
+           integration::world_seed_12650::block_source_get_level_signature.data(),
+           integration::world_seed_12650::block_source_get_level_signature.size())||
+       std::memcmp(image+integration::world_seed_12650::level_get_seed_rva,
+           integration::world_seed_12650::level_get_seed_signature.data(),
+           integration::world_seed_12650::level_get_seed_signature.size())||
+       !executable_game_code(reinterpret_cast<void*>(get_level))||
+       !executable_game_code(reinterpret_cast<void*>(get_seed))) return;
     std::uint64_t seed{};
 #if defined(_MSC_VER)
-    __try { seed=get_seed(region).value; }
+    __try {
+        auto* level=get_level(region);
+        auto* level_table=read<void**>(level);
+        auto* level_data=read<void*>(level_table,integration::world_seed_12650::level_data_vtable_slot);
+        if(!level||!level_table||!executable_game_code(level_data)) return;
+        integration::world_seed_12650::LevelSeed64Abi result{};
+        const auto* returned=get_seed(level,&result);
+        if(!integration::world_seed_12650::returned_expected_buffer(returned,&result)) return;
+        seed=result.value;
+    }
     __except(EXCEPTION_EXECUTE_HANDLER) {
         rejected_dimension=dimension;
-        Logger::instance().info("World seed unavailable: BlockSource seed accessor faulted; disabled for this dimension.");
+        Logger::instance().info("World seed unavailable: verified Level seed accessor faulted; disabled for this dimension.");
         return;
     }
 #else
-    seed=get_seed(region).value;
+    auto* level=get_level(region);
+    integration::world_seed_12650::LevelSeed64Abi result{};
+    if(!integration::world_seed_12650::returned_expected_buffer(get_seed(level,&result),&result))return;
+    seed=result.value;
 #endif
     if(seed_looks_like_process_pointer(seed)) {
         rejected_dimension=dimension;
-        Logger::instance().info("World seed unavailable: BlockSource seed accessor returned a process pointer; disabled for this dimension.");
+        Logger::instance().info("World seed unavailable: verified Level seed accessor produced a process pointer; disabled for this dimension.");
         return;
     }
     integration::publish_world_seed(seed);
+    Logger::instance().info("World seed acquired through verified Minecraft 26.50 LevelSeed64 ABI.");
 }
 
 // IClientInstance::requestLeaveGameAsync is vtable slot 14 in the supported
