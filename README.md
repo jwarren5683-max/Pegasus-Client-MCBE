@@ -14,6 +14,7 @@ Minecraft `1.26.5101.0` (Bedrock 26.50) is now recognized by an exact executable
 - Phase module doesn't work, and the speed module works but is janky.
 - You can type '.help' in the chat while the client is loaded in your game and it will show you some commands the client provides.
 - Type '.loki' to show the current Loki build and the features confirmed working on 26.50.
+- After Loki finishes loading in a world, it displays `[Loki] Loaded` once in local chat.
 - Server restrictions remain authoritative. This build does not attempt to evade anti-cheat or server-side validation.
 - I am trying to add a baritone style autominer to the client but its not ready yet. I also would like to add many more modules in the future.
 - If the client breaks, restart minecraft. This shouldn't happen in most circumstances. It can happen if you eject and re-inject the client however. 

@@ -50,6 +50,30 @@ std::atomic<unsigned> auto_leave_revision{};
 std::atomic_bool auto_leave_ready{};
 std::atomic_bool auto_bridge_ready{};
 auto_leave::Gate auto_leave_gate;
+class StartupNoticeGate final {
+public:
+    void arm() noexcept {
+        unsigned expected=disarmed;
+        state_.compare_exchange_strong(expected,pending);
+    }
+    void disarm() noexcept { state_.store(disarmed); }
+    template<class Sender> bool try_send(void* player, Sender&& sender) noexcept {
+        if (!player) return false;
+        unsigned expected=pending;
+        if (!state_.compare_exchange_strong(expected,sending)) return false;
+        bool ok=false;
+        try { ok=static_cast<bool>(sender(player)); } catch (...) {}
+        expected=sending;
+        state_.compare_exchange_strong(expected,ok?sent:pending);
+        return ok;
+    }
+    [[nodiscard]] bool was_sent() const noexcept { return state_.load()==sent; }
+private:
+    enum : unsigned { disarmed, pending, sending, sent };
+    std::atomic<unsigned> state_{disarmed};
+};
+constexpr char startup_notice_text[]="[Loki] Loaded";
+StartupNoticeGate startup_notice;
 unsigned key_bit(unsigned code) {
     switch(code) { case 'W': return 1; case 'S': return 2; case 'A': return 4; case 'D': return 8; case VK_SPACE: return 16; default: return 0; }
 }
@@ -440,11 +464,16 @@ struct GameString { union { char text[16]; const char* pointer; }; std::size_t s
 };
 struct OptionalString { GameString value; bool present{}; Byte padding[7]{}; };
 bool local_chat(void* player, const char* text) {
+    if (!player || !text) return false;
     auto* chat=read<void*>(read<void*>(player,0xD70),0x648);
-    if (!chat) return false;
+    if (!chat || !integration::readable_game_memory(chat,sizeof(void*))) return false;
     const GameString message(text); OptionalString source;
     native<void(__fastcall*)(void*,const GameString*,const OptionalString*,bool)>(0x16DA850)(chat,&message,&source,false);
     return true;
+}
+void startup_notice_tick(void* player) noexcept {
+    if(startup_notice.try_send(player,[](void* current){return local_chat(current,startup_notice_text);}))
+        Logger::instance().info("Startup chat notice displayed.");
 }
 bool copy_clipboard(const wchar_t* text) {
     const auto bytes=(std::wcslen(text)+1)*sizeof(wchar_t);
@@ -646,6 +675,7 @@ void __fastcall esp_tick_12650(void* player) {
     original_tick(player);
     void* table{};if(!camera_read(player,0,&table,sizeof(table))||table!=image+0xE8E1BC0)return;
     integration::game_context_detail::player.store(player,std::memory_order_release);
+    startup_notice_tick(player);
     // AutoLeave runs on the engine's verified LocalPlayer tick, after native
     // health updates, never on the overlay thread. Dimension changes rearm it.
     if(auto_leave_ready.load()) {
@@ -818,6 +848,7 @@ void tick_features(void* player,Vec3 before,bool alive_before) {
     local_state.store(state);
     local_unique_id.store(unique_id(player));
     integration::game_context_detail::player.store(player);
+    startup_notice_tick(player);
     if(alive){last_alive=read<Vec3>(shape);was_alive=true;}
     else if(was_alive){
         was_alive=false;
@@ -1080,6 +1111,9 @@ void initialize() {
     esp_ready=true;ready=true;Logger::instance().info("Native gameplay modules initialized for Minecraft 1.26.4501.0.");
 }
 }
+
+void arm_startup_notice() noexcept { startup_notice.arm(); }
+void disarm_startup_notice() noexcept { startup_notice.disarm(); }
 
 std::string_view GameplayModule::name() const noexcept {
     constexpr std::string_view names[]{"ESP","Autotool","Phase","Airjump","deathposition","autosprint","ChestESP","triggerbot","Jetpack","Auto Leave","Auto Bridge"};

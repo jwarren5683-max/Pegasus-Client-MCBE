@@ -10,6 +10,26 @@ int leave_calls=0;
 void __fastcall mock_leave(void*){++leave_calls;}
 int main(){
     utility::integration::server_safety::reset();
+    startup_notice.disarm();
+    check(std::strcmp(startup_notice_text,"[Loki] Loaded")==0,"startup notice text");
+    int startup_calls{};
+    int startup_player_token{};
+    startup_notice.arm();
+    check(!startup_notice.try_send(nullptr,[&](void*){++startup_calls;return true;})&&startup_calls==0,
+        "startup notice must wait for a player");
+    check(!startup_notice.try_send(&startup_player_token,[&](void*){++startup_calls;return false;})&&startup_calls==1,
+        "startup notice must retry after chat is not ready");
+    check(startup_notice.try_send(&startup_player_token,[&](void*){++startup_calls;return true;})&&startup_notice.was_sent()&&startup_calls==2,
+        "startup notice sends once after chat becomes ready");
+    check(!startup_notice.try_send(&startup_player_token,[&](void*){++startup_calls;return true;})&&startup_calls==2,
+        "startup notice must not duplicate after success");
+    startup_notice.disarm();
+    check(!startup_notice.try_send(&startup_player_token,[&](void*){++startup_calls;return true;})&&startup_calls==2,
+        "disarmed startup notice must stay silent");
+    startup_notice.arm();
+    check(startup_notice.try_send(&startup_player_token,[&](void*){++startup_calls;return true;})&&startup_calls==3,
+        "startup notice can rearm cleanly for a later client session");
+    startup_notice.disarm();
     std::array<Byte,0xE00> leave_player{};
     void* leave_table[15]{};
     struct FakeClient { void** table; } leave_client{leave_table};
