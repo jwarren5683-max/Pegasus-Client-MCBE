@@ -11,6 +11,7 @@ void __fastcall mock_leave(void*){++leave_calls;}
 int main(){
     utility::integration::server_safety::reset();
     startup_notice.disarm();
+    check(std::strcmp(startup_notice_text,"[Loki] Loaded")==0,"startup notice text");
     int startup_calls{};
     int startup_player_token{};
     startup_notice.arm();
