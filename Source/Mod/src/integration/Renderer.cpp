@@ -141,6 +141,8 @@ LRESULT CALLBACK Renderer::keyboard_hook(int code, WPARAM wparam, LPARAM lparam)
                 for (const auto& module : self->modules_->modules())
                     if (module->enabled()) module->on_key_down(key.vkCode);
         }
+        if (self->legacy_menu_toggle_.update(key.vkCode, down, gameplay))
+            InvalidateRect(self->overlay_window_, nullptr, FALSE);
         if (key.vkCode >= VK_LEFT && key.vkCode <= VK_DOWN) {
             const auto index = key.vkCode - VK_LEFT;
             const bool held = self->arrow_held_[index];
@@ -339,7 +341,7 @@ void Renderer::paint(HWND window) noexcept {
     fill_rectangle(device, client, transparent_key);
     for (const auto& module : modules_->modules()) if (module->enabled()) module->draw_overlay(device, client_width, client_height);
     if (!menu_visible_) {
-        paint_legacy(device);
+        if (legacy_menu_toggle_.visible()) paint_legacy(device);
         const auto array_list = std::find_if(modules_->modules().begin(), modules_->modules().end(),
             [](const auto& module) { return module->enabled() && module->shows_array_list(); });
         if (array_list != modules_->modules().end()) {
@@ -355,7 +357,7 @@ void Renderer::paint(HWND window) noexcept {
             const auto old_font = SelectObject(device, font);
             SetBkMode(device, TRANSPARENT);
             const int count = legacy_expanded_ ? (std::max)(1, static_cast<int>(rows_for_category(*modules_, categories[legacy_category_].category).size())) : 7;
-            int y = left ? 74 + count * 26 : 14;
+            int y = left && legacy_menu_toggle_.visible() ? 74 + count * 26 : 14;
             for (const auto* module : enabled) {
                 auto text = widen(module->name());
                 RECT shadow{15,y+1,client_width-13,y+24}; SetTextColor(device,RGB(0,0,0));

@@ -6,6 +6,8 @@
 #include <atomic>
 #include <vector>
 
+#include "LegacyMenuToggle.hpp"
+
 namespace utility {
 class ModuleManager;
 class Module;
@@ -33,6 +35,7 @@ private:
     int legacy_category_{};
     int legacy_module_{};
     bool legacy_expanded_{};
+    LegacyMenuToggle legacy_menu_toggle_{};
     std::array<bool, 4> arrow_held_{};
     Module* slider_module_{};
     RECT slider_rect_{};
