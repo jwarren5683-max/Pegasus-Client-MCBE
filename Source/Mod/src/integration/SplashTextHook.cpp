@@ -17,7 +17,7 @@ constexpr std::uint32_t supported_timestamp = 0x6A8378BA;
 constexpr std::uint32_t supported_image_size = 0x12888000;
 constexpr std::uintptr_t splash_loader_rva = 0x41FA580;
 constexpr std::size_t patch_size = 19;
-constexpr std::string_view replacement = "made by Roundomegaboi";
+constexpr std::string_view replacement = "Loki";
 
 constexpr std::array<std::byte, patch_size> expected_prologue{
     std::byte{0x55},
