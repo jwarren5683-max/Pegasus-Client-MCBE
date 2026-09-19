@@ -60,10 +60,10 @@ bool matches(unsigned binding, const std::array<bool,256>& pressed) {
     if (binding == VK_MENU) return pressed[VK_MENU] || pressed[VK_LMENU] || pressed[VK_RMENU];
     return pressed[binding];
 }
-constexpr auto usage = "Usage: ,keybind <module> <key> <toggle|keyhold> (quote names containing spaces).";
+constexpr auto usage = "Usage: .keybind <module> <key> <toggle|keyhold> (quote names containing spaces).";
 }
 bool Commands::execute(std::string_view text, ModuleManager& modules, std::vector<std::string>& replies) {
-    if (text.empty() || text.front() != ',') return false;
+    if (text.empty() || text.front() != Commands::prefix) return false;
     // Apply a consistent error/usage color to every early-return response.
     struct StyleReplies {
         std::vector<std::string>& lines;
@@ -78,15 +78,15 @@ bool Commands::execute(std::string_view text, ModuleManager& modules, std::vecto
         }
     } style{replies,replies.size()};
     std::vector<std::string> args;
-    if (!tokenize(text.substr(1), args)) { replies.emplace_back("Unclosed or misplaced quote. Quote the complete module name; type ,help for usage."); return true; }
+    if (!tokenize(text.substr(1), args)) { replies.emplace_back("Unclosed or misplaced quote. Quote the complete module name; type .help for usage."); return true; }
     const auto name = args.empty() ? std::string{} : lower(args[0]);
     if (name == "help") {
-        if (args.size() != 1) replies.emplace_back("Usage: ,help (no arguments).");
+        if (args.size() != 1) replies.emplace_back("Usage: .help (no arguments).");
         else {
-            replies.emplace_back(std::string(chat_style::aqua)+",help"+chat_style::gray+" - Show commands.");
-            replies.emplace_back(std::string(chat_style::aqua)+",keybind "+chat_style::white+"<module> <key> <toggle|keyhold>"+chat_style::gray+" - Bind a module; quote spaced names.");
-            replies.emplace_back(std::string(chat_style::aqua)+",unbind "+chat_style::white+"<module>"+chat_style::gray+" - Remove all key bindings for a module.");
-            replies.emplace_back(std::string(chat_style::aqua)+",eject"+chat_style::gray+" - Disable the mod for this session.");
+            replies.emplace_back(std::string(chat_style::aqua)+".help"+chat_style::gray+" - Show commands.");
+            replies.emplace_back(std::string(chat_style::aqua)+".keybind "+chat_style::white+"<module> <key> <toggle|keyhold>"+chat_style::gray+" - Bind a module; quote spaced names.");
+            replies.emplace_back(std::string(chat_style::aqua)+".unbind "+chat_style::white+"<module>"+chat_style::gray+" - Remove all key bindings for a module.");
+            replies.emplace_back(std::string(chat_style::aqua)+".eject"+chat_style::gray+" - Disable the mod for this session.");
             for (const auto& module : modules.modules())
                 for (const auto& line : module->command_help())
                     replies.emplace_back(std::string(chat_style::aqua)+line);
@@ -94,7 +94,7 @@ bool Commands::execute(std::string_view text, ModuleManager& modules, std::vecto
         return true;
     }
     if (name == "eject") {
-        if (args.size()!=1) { replies.emplace_back("Usage: ,eject (no arguments)."); return true; }
+        if (args.size()!=1) { replies.emplace_back("Usage: .eject (no arguments)."); return true; }
         std::lock_guard lock(mutex_);
         if (eject_pending_) replies.emplace_back(std::string(chat_style::yellow)+"Ejection is already in progress.");
         else if (!eject_handler_ || !eject_handler_()) replies.emplace_back("Could not start ejection. Try again.");
@@ -107,10 +107,10 @@ bool Commands::execute(std::string_view text, ModuleManager& modules, std::vecto
     if (name != "keybind" && name != "unbind") {
         for (const auto& candidate : modules.modules())
             if (candidate->handle_command(args,replies)) return true;
-        replies.emplace_back("Unrecognized utility command. Type ,help for available commands."); return true;
+        replies.emplace_back("Unrecognized utility command. Type .help for available commands."); return true;
     }
     if (args.size() != (name == "unbind" ? 2U : 4U)) {
-        replies.emplace_back(name == "unbind" ? "Usage: ,unbind <module> (quote names containing spaces)." : usage);
+        replies.emplace_back(name == "unbind" ? "Usage: .unbind <module> (quote names containing spaces)." : usage);
         return true;
     }
     Module* module{};
