@@ -44,7 +44,14 @@ public:
             last_ = now;
             return {true};
         }
-        if (now < last_ || now - last_ >= interval_ms_) {
+        if (now < last_) {
+            // A monotonic-clock anomaly should never trigger a placement.
+            // Reset so the next valid tick can re-arm normally.
+            armed_ = false;
+            last_ = 0;
+            return {};
+        }
+        if (now - last_ >= interval_ms_) {
             last_ = now;
             return {true};
         }
