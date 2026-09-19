@@ -3,6 +3,13 @@
 #include <algorithm>
 #include <iostream>
 
+class Unavailable final : public utility::Module {
+public:
+    std::string_view name() const noexcept override { return "Unavailable test module"; }
+    utility::ModuleCategory category() const noexcept override { return utility::ModuleCategory::combat; }
+    bool available() const noexcept override { return false; }
+};
+
 class Adjustable final : public utility::Module {
 public:
     std::string_view name() const noexcept override { return "Test distance"; }
@@ -45,6 +52,7 @@ int main() {
         return 77;
     }
     utility::ModuleManager manager;
+    auto unavailable = std::make_unique<Unavailable>(); auto* unavailable_ptr = unavailable.get(); manager.add(std::move(unavailable));
     auto module = std::make_unique<Adjustable>(); auto* adjustable = module.get(); manager.add(std::move(module));
     utility::integration::Renderer renderer;
     if (!renderer.initialize(instance, manager)) return 1;
@@ -55,6 +63,7 @@ int main() {
     if (!(IsWindowVisible(overlay) != FALSE)) { passed = false; std::cerr << "Check failed at line " << __LINE__ << "\n"; }
     SendMessageW(overlay, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(40, 70));
     if (!(adjustable->enabled())) { passed = false; std::cerr << "Check failed at line " << __LINE__ << "\n"; }
+    if (unavailable_ptr->enabled()) { passed = false; std::cerr << "Unavailable row was not filtered at line " << __LINE__ << "\n"; }
     SendMessageW(overlay, WM_PAINT, 0, 0);
     SendMessageW(overlay, WM_RBUTTONDOWN, MK_RBUTTON, MAKELPARAM(40, 70));
     if (!(adjustable->enabled() && adjustable->distance == 5)) { passed = false; std::cerr << "Check failed at line " << __LINE__ << "\n"; }
