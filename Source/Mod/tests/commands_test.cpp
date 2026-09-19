@@ -46,9 +46,14 @@ int main() {
         require(!commands.execute(" .help",modules,ordinary),"only leading period is a command");
         require(!commands.execute(",help",modules,ordinary),"legacy comma prefix is still consumed");
         const auto help=execute(".help");
-        require(help.size()==4,"help must contain exactly one row per command");
-        require(help[0].starts_with(".help") && help[1].starts_with(".keybind") && help[2].starts_with(".unbind") && help[3].starts_with(".eject"),"help registry");
+        require(help.size()==5,"help must contain exactly one row per command");
+        require(help[0].starts_with(".help") && help[1].starts_with(".loki") && help[2].starts_with(".keybind") && help[3].starts_with(".unbind") && help[4].starts_with(".eject"),"help registry");
         for (const auto& line:help) require(line.find('\n')==std::string::npos && line.size()<140,"help must stay concise");
+        const auto loki=execute(".loki");
+        require(loki.size()==2,"loki command must return two lines");
+        require(loki[0]=="Loki | Minecraft 26.50","loki build line");
+        require(loki[1]=="Confirmed: Reach, Block Reach, X-Ray, Fullbright, ESP, ChestESP, Auto Leave, Auto Bridge","loki feature line");
+        require(execute(".loki extra")[0].starts_with("Usage: .loki"),"loki arity");
         unsigned eject_calls{};
         commands.set_eject_handler([&]{++eject_calls;return false;});
         require(execute(".eject extra")[0].starts_with("Usage:"),"eject arity");
@@ -133,7 +138,7 @@ int main() {
         };
         submit("normal message");submit("/help");submit("hello, world");submit(" .help");
         require(sent==std::vector<std::string>({"normal message","/help","hello, world"," .help"}),"normal native chat changed");
-        submit(".help");submit(".keybind \"Test Module\" G toggle");submit(".unknown");submit(".");submit(".help extra");
+        submit(".help");submit(".loki");submit(".keybind \"Test Module\" G toggle");submit(".unknown");submit(".");submit(".help extra");
         submit(".keybind \"Test Module\" G bad");submit("."+std::string(33000,'x'));
         submit(".unbind \"Test Module\"");submit(".unbind Missing");submit(".unbind");
         require(sent.size()==4,"command leaked into native sender");require(displayed.size()>=7,"missing local feedback");
