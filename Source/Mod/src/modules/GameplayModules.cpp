@@ -713,7 +713,11 @@ bool send_trigger_mouse(DWORD mouse_flags) {
 bool emit_bridge_place() {
     if(!controls_active()||integration::server_safety::remote_session())return false;
     if(!send_trigger_mouse(MOUSEEVENTF_RIGHTDOWN))return false;
-    if(!send_trigger_mouse(MOUSEEVENTF_RIGHTUP))return false;
+    // Never intentionally leave the synthetic button held if Windows drops
+    // the first release event. One bounded retry is safe and fail-closed.
+    bool released=send_trigger_mouse(MOUSEEVENTF_RIGHTUP);
+    if(!released)released=send_trigger_mouse(MOUSEEVENTF_RIGHTUP);
+    if(!released)return false;
     static ULONGLONG last_log{};const auto now=GetTickCount64();
     if(now-last_log>=1000){last_log=now;Logger::instance().info("Auto Bridge dispatched guarded right-click input.");}
     return true;
@@ -727,13 +731,11 @@ void auto_bridge_tick(void* player) {
     const auto rotation=read<void*>(player,0x228);
     const auto pitch=read<float>(rotation,0);
     const auto supplies=read<void*>(player,0x5B8);
-    const auto selected=read<int>(supplies,0x10);
-    // The current profile has no verified item-class accessor. The previous
-    // pointer/slot check could reject every placement after a layout update;
-    // require only a plausible hotbar index and leave the item choice to the
-    // user. The explicit modifier, downward aim and normal game placement
-    // path remain mandatory.
-    const bool selected_slot=selected>=0&&selected<9;
+    int selected=-1;
+    // Keep the relaxed 26.50 slot check that worked in testing, but do not let
+    // a failed read silently become slot 0. ReadProcessMemory fails closed.
+    const bool selected_slot=supplies&&camera_read(supplies,0x10,&selected,sizeof(selected))&&
+        selected>=0&&selected<9;
     const auto controller=controller_controls();
     // The 26.50 player-alive target is not part of the verified profile yet;
     // controls are already disabled by the game when the local player is not
