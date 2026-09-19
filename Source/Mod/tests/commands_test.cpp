@@ -56,6 +56,8 @@ int main() {
         require(execute(".loki extra")[0].starts_with("Usage: .loki"),"loki arity");
         integration::reset_world_seed();
         require(execute(".seed")[0].find("not available")!=std::string::npos,"seed unavailable feedback");
+        integration::publish_world_seed(0);
+        require(execute(".seed")[0]=="World Seed: 0","zero world seed is valid");
         integration::publish_world_seed(123456789ULL);
         require(execute(".seed")[0]=="World Seed: 123456789","positive world seed");
         integration::publish_world_seed(~std::uint64_t{});
