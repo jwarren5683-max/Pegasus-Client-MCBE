@@ -1,5 +1,6 @@
 #pragma once
 
+#include <bit>
 #include <cstdint>
 #include <mutex>
 
@@ -26,7 +27,7 @@ inline void publish_world_seed(std::uint64_t seed) noexcept {
 [[nodiscard]] inline bool current_world_seed(std::int64_t& seed) noexcept {
     std::lock_guard lock(world_seed_detail::mutex);
     if(!world_seed_detail::valid) return false;
-    seed=static_cast<std::int64_t>(world_seed_detail::value);
+    seed=std::bit_cast<std::int64_t>(world_seed_detail::value);
     return true;
 }
 
