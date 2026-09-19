@@ -47,8 +47,8 @@ int main() {
         require(!commands.execute(" .help",modules,ordinary),"only leading period is a command");
         require(!commands.execute(",help",modules,ordinary),"legacy comma prefix is still consumed");
         const auto help=execute(".help");
-        require(help.size()==6,"help must contain exactly one row per command");
-        require(help[0].starts_with(".help") && help[1].starts_with(".loki") && help[2].starts_with(".seed") && help[3].starts_with(".keybind") && help[4].starts_with(".unbind") && help[5].starts_with(".eject"),"help registry");
+        require(help.size()==7,"help must contain exactly one row per command");
+        require(help[0].starts_with(".help") && help[1].starts_with(".loki") && help[2].starts_with(".seed") && help[3].starts_with(".keybind") && help[4].starts_with(".unbind") && help[5].starts_with(".binds") && help[6].starts_with(".eject"),"help registry");
         for (const auto& line:help) require(line.find('\n')==std::string::npos && line.size()<140,"help must stay concise");
         const auto loki=execute(".loki");
         require(loki.size()==2,"loki command must return two lines");
@@ -65,6 +65,8 @@ int main() {
         require(execute(".seed")[0]=="World Seed: -1","signed world seed");
         require(execute(".seed extra")[0].starts_with("Usage: .seed"),"seed arity");
         integration::reset_world_seed();
+        require(execute(".binds")[0]=="No key bindings.","empty binds feedback");
+        require(execute(".binds extra")[0].starts_with("Usage: .binds"),"binds arity");
         unsigned eject_calls{};
         commands.set_eject_handler([&]{++eject_calls;return false;});
         require(execute(".eject extra")[0].starts_with("Usage:"),"eject arity");
@@ -83,12 +85,21 @@ int main() {
         execute(".keybind \"Test Module\" G toggle extra");
         commands.key('G',true,true);require(!module->enabled(),"invalid binding was installed");commands.key('G',false,true);
         execute(".KEYBIND \"test module\" g TOGGLE");
+        {
+            const auto binds=execute(".binds");
+            require(binds.size()==2 && binds[0]=="Key bindings:" &&
+                binds[1]=="Test Module -> G (toggle)","binds toggle listing");
+        }
         commands.key('G',true,true);require(module->enabled(),"toggle on");
         commands.key('G',true,true);require(module->enabled(),"repeat toggled");
         commands.key('G',false,true);commands.key('G',true,true);require(!module->enabled(),"toggle off");
         commands.key('G',false,true);commands.key('G',true,false);commands.key('G',true,true);
         require(!module->enabled(),"typing or held key activated on resume");commands.key('G',false,true);
         execute(".keybind \"Test Module\" H keyhold");
+        {
+            const auto binds=execute(".binds");
+            require(binds.size()==2 && binds[1]=="Test Module -> H (keyhold)","binds keyhold listing");
+        }
         commands.key('G',true,true);require(!module->enabled(),"old binding remains");commands.key('G',false,true);
         commands.key('H',true,true);require(module->enabled(),"hold on");
         commands.key('H',false,false);require(!module->enabled(),"hold release after focus loss");
@@ -96,6 +107,7 @@ int main() {
         commands.key('H',true,true);require(!module->enabled(),"resume repeat");commands.key('H',false,true);
         commands.key('H',true,true);execute(".keybind \"Test Module\" F6 toggle");require(!module->enabled(),"rebind release");
         commands.key('H',false,true);commands.key(VK_F6,true,true);require(module->enabled(),"F key binding");commands.key(VK_F6,false,true);
+        require(execute(".binds")[1]=="Test Module -> F6 (toggle)","binds F-key name");
         execute(".keybind \"Test Module\" shift keyhold");require(!module->enabled(),"hold assignment resets enabled module");
         commands.key(VK_LSHIFT,true,true);commands.key(VK_RSHIFT,true,true);commands.key(VK_LSHIFT,false,true);
         require(module->enabled(),"generic modifier released while other side held");commands.key(VK_RSHIFT,false,true);require(!module->enabled(),"modifier release");
@@ -149,7 +161,7 @@ int main() {
         };
         submit("normal message");submit("/help");submit("hello, world");submit(" .help");
         require(sent==std::vector<std::string>({"normal message","/help","hello, world"," .help"}),"normal native chat changed");
-        submit(".help");submit(".loki");submit(".seed");submit(".keybind \"Test Module\" G toggle");submit(".unknown");submit(".");submit(".help extra");
+        submit(".help");submit(".loki");submit(".seed");submit(".binds");submit(".keybind \"Test Module\" G toggle");submit(".unknown");submit(".");submit(".help extra");
         submit(".keybind \"Test Module\" G bad");submit("."+std::string(33000,'x'));
         submit(".unbind \"Test Module\"");submit(".unbind Missing");submit(".unbind");
         require(sent.size()==4,"command leaked into native sender");require(displayed.size()>=7,"missing local feedback");

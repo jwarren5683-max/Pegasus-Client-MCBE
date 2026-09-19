@@ -61,6 +61,25 @@ bool matches(unsigned binding, const std::array<bool,256>& pressed) {
     if (binding == VK_MENU) return pressed[VK_MENU] || pressed[VK_LMENU] || pressed[VK_RMENU];
     return pressed[binding];
 }
+std::string key_name(unsigned code) {
+    if (code>='A'&&code<='Z') return std::string(1,static_cast<char>(code));
+    if (code>='0'&&code<='9') return std::string(1,static_cast<char>(code));
+    if (code>=VK_F1&&code<=VK_F24) return "F"+std::to_string(code-VK_F1+1);
+    struct NamedKey { unsigned code; std::string_view name; };
+    constexpr NamedKey keys[]{
+        {VK_SPACE,"Space"},{VK_SHIFT,"Shift"},{VK_CONTROL,"Ctrl"},{VK_MENU,"Alt"},
+        {VK_LSHIFT,"LShift"},{VK_RSHIFT,"RShift"},{VK_LCONTROL,"LCtrl"},{VK_RCONTROL,"RCtrl"},
+        {VK_LMENU,"LAlt"},{VK_RMENU,"RAlt"},{VK_CAPITAL,"CapsLock"},{VK_INSERT,"Insert"},
+        {VK_DELETE,"Delete"},{VK_HOME,"Home"},{VK_END,"End"},{VK_PRIOR,"PageUp"},
+        {VK_NEXT,"PageDown"},{VK_BACK,"Backspace"},{VK_OEM_MINUS,"Minus"},{VK_OEM_PLUS,"Plus"},
+        {VK_OEM_PERIOD,"Period"},{VK_OEM_COMMA,"Comma"},{VK_OEM_2,"Slash"},{VK_OEM_1,"Semicolon"},
+        {VK_OEM_7,"Quote"},{VK_OEM_5,"Backslash"},{VK_OEM_4,"LBracket"},{VK_OEM_6,"RBracket"},
+        {VK_OEM_3,"Grave"}
+    };
+    for (const auto& key:keys) if(key.code==code) return std::string(key.name);
+    if(code>=VK_NUMPAD0&&code<=VK_NUMPAD9) return "Numpad"+std::to_string(code-VK_NUMPAD0);
+    return "VK "+std::to_string(code);
+}
 constexpr auto usage = "Usage: .keybind <module> <key> <toggle|keyhold> (quote names containing spaces).";
 }
 bool Commands::execute(std::string_view text, ModuleManager& modules, std::vector<std::string>& replies) {
@@ -89,6 +108,7 @@ bool Commands::execute(std::string_view text, ModuleManager& modules, std::vecto
             replies.emplace_back(std::string(chat_style::aqua)+".seed"+chat_style::gray+" - Show the current world/server seed supplied to this client.");
             replies.emplace_back(std::string(chat_style::aqua)+".keybind "+chat_style::white+"<module> <key> <toggle|keyhold>"+chat_style::gray+" - Bind a module; quote spaced names.");
             replies.emplace_back(std::string(chat_style::aqua)+".unbind "+chat_style::white+"<module>"+chat_style::gray+" - Remove all key bindings for a module.");
+            replies.emplace_back(std::string(chat_style::aqua)+".binds"+chat_style::gray+" - List current Loki key bindings.");
             replies.emplace_back(std::string(chat_style::aqua)+".eject"+chat_style::gray+" - Disable the mod for this session.");
             for (const auto& module : modules.modules())
                 for (const auto& line : module->command_help())
@@ -111,6 +131,21 @@ bool Commands::execute(std::string_view text, ModuleManager& modules, std::vecto
             return true;
         }
         replies.emplace_back(std::string(chat_style::green)+"World Seed: "+chat_style::white+std::to_string(seed));
+        return true;
+    }
+    if (name == "binds") {
+        if (args.size()!=1) { replies.emplace_back("Usage: .binds (no arguments)."); return true; }
+        std::lock_guard lock(mutex_);
+        if(bindings_.empty()) {
+            replies.emplace_back(std::string(chat_style::yellow)+"No key bindings.");
+            return true;
+        }
+        replies.emplace_back(std::string(chat_style::aqua)+"Key bindings:");
+        for(const auto& binding:bindings_) {
+            replies.emplace_back(std::string(chat_style::white)+std::string(binding.module->name())+
+                chat_style::gray+" -> "+chat_style::aqua+key_name(binding.key)+chat_style::gray+
+                " ("+(binding.hold?"keyhold":"toggle")+")");
+        }
         return true;
     }
     if (name == "eject") {
