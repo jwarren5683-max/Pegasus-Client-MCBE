@@ -152,9 +152,13 @@ bool executable_game_code(const void* address) {
     return (information.Protect&executable)!=0 && (information.Protect&PAGE_GUARD)==0;
 }
 
+// Current 26.50 IBlockSource ABI: the already-verified getChunk(ChunkPos)
+// slot is followed by getLevel(), getILevel(), then getLevelSeed64().
 constexpr std::size_t block_source_get_chunk_slot_12650=0x148;
 constexpr std::size_t block_source_get_seed_slot_12650=0x160;
 static_assert(block_source_get_seed_slot_12650==block_source_get_chunk_slot_12650+3*sizeof(void*));
+struct LevelSeed64Abi { std::uint64_t value; };
+static_assert(sizeof(LevelSeed64Abi)==sizeof(std::uint64_t));
 
 bool seed_looks_like_process_pointer(std::uint64_t value) noexcept {
     if(value<0x10000ULL||value>0x00007FFFFFFFFFFFULL)return false;
@@ -182,19 +186,19 @@ void refresh_world_seed_12650(void* player) noexcept {
     auto* region=read<void*>(dimension,0xF0);
     auto* table=read<void**>(region);
     if(!region||!table||read<void*>(table,block_source_get_chunk_slot_12650)!=image+profile->get_chunk) return;
-    using GetSeed=std::uint64_t(__fastcall*)(void*);
+    using GetSeed=LevelSeed64Abi(__fastcall*)(void*);
     const auto get_seed=read<GetSeed>(table,block_source_get_seed_slot_12650);
     if(!executable_game_code(reinterpret_cast<void*>(get_seed))) return;
     std::uint64_t seed{};
 #if defined(_MSC_VER)
-    __try { seed=get_seed(region); }
+    __try { seed=get_seed(region).value; }
     __except(EXCEPTION_EXECUTE_HANDLER) {
         rejected_dimension=dimension;
         Logger::instance().info("World seed unavailable: BlockSource seed accessor faulted; disabled for this dimension.");
         return;
     }
 #else
-    seed=get_seed(region);
+    seed=get_seed(region).value;
 #endif
     if(seed_looks_like_process_pointer(seed)) {
         rejected_dimension=dimension;
