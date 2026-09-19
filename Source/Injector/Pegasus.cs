@@ -75,7 +75,7 @@ internal static class Program {
         Application.Run(new PegasusForm()); return 0;
     }
     internal static void VerifyDll() {
-        if (!File.Exists(DllPath)) throw new IOException("Keep the included DLL beside Pegasus.exe.");
+        if (!File.Exists(DllPath)) throw new IOException("Keep the included DLL beside this launcher.");
         using (var stream = File.OpenRead(DllPath)) using (var hash = SHA256.Create()) {
             if (BitConverter.ToString(hash.ComputeHash(stream)).Replace("-", "") != ExpectedHash)
                 throw new IOException("The DLL does not match this release. Restore the original bundled DLL.");
@@ -85,15 +85,15 @@ internal static class Program {
 
 internal sealed class PegasusButton : Button {
     protected override void OnPaint(PaintEventArgs e) {
-        e.Graphics.Clear(Enabled ? BackColor : Color.FromArgb(50, 42, 76));
+        e.Graphics.Clear(Enabled ? BackColor : Color.FromArgb(31, 55, 38));
         TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle,
-            Enabled ? Color.White : Color.FromArgb(182, 166, 219), TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            Enabled ? Color.White : Color.FromArgb(154, 188, 161), TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         if (Focused) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle, -4, -4));
     }
 }
 
 internal sealed class PegasusForm : Form {
-    readonly Color muted = Color.FromArgb(161, 164, 190);
+    readonly Color muted = Color.FromArgb(142, 170, 148);
     readonly ComboBox targets = new ComboBox();
     readonly Label status = new Label();
     readonly Button load = new PegasusButton();
@@ -103,34 +103,34 @@ internal sealed class PegasusForm : Form {
         public override string ToString() { return Name + "   /   PID " + Id; }
     }
     internal PegasusForm() {
-        Text = "Pegasus Enhanced | Minecraft 26.50 repair";
+        Text = "Loki | Minecraft 26.50";
         ClientSize = new Size(580, 490); FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false; StartPosition = FormStartPosition.CenterScreen;
-        BackColor = Color.FromArgb(15, 17, 27); ForeColor = Color.White;
+        BackColor = Color.FromArgb(10, 18, 12); ForeColor = Color.White;
         Font = new Font("Segoe UI", 10); AutoScaleMode = AutoScaleMode.Dpi;
         DoubleBuffered = true;
-        AddLabel("pegasus", 32, 23, 430, 63, 36, Color.White, FontStyle.Bold);
-        AddLabel("UTILITY MOD   /   1.0", 36, 93, 440, 25, 10, Color.FromArgb(188, 169, 252), FontStyle.Bold);
+        AddLabel("loki", 32, 23, 430, 63, 36, Color.White, FontStyle.Bold);
+        AddLabel("UTILITY MOD   /   1.0", 36, 93, 440, 25, 10, Color.FromArgb(122, 235, 150), FontStyle.Bold);
         AddLabel("BETA VERSION", 36, 137, 500, 26, 13, Color.White, FontStyle.Bold);
         AddLabel("MINECRAFT BEDROCK  ·  X64", 36, 174, 510, 23, 9, muted, FontStyle.Bold);
         AddLabel("GAME SESSION", 36, 224, 430, 20, 9, muted, FontStyle.Bold);
         targets.SetBounds(36, 253, 390, 32); targets.DropDownStyle = ComboBoxStyle.DropDownList;
-        targets.BackColor = Color.FromArgb(32, 35, 51); targets.ForeColor = Color.White; targets.FlatStyle = FlatStyle.Flat;
+        targets.BackColor = Color.FromArgb(20, 34, 24); targets.ForeColor = Color.White; targets.FlatStyle = FlatStyle.Flat;
         targets.DrawMode = DrawMode.OwnerDrawFixed; targets.ItemHeight = 25;
         targets.DrawItem += delegate(object sender, DrawItemEventArgs e) {
-            using (var brush = new SolidBrush(Color.FromArgb(32,35,51))) e.Graphics.FillRectangle(brush, e.Bounds);
+            using (var brush = new SolidBrush(Color.FromArgb(20,34,24))) e.Graphics.FillRectangle(brush, e.Bounds);
             string value = e.Index >= 0 ? targets.Items[e.Index].ToString() : "No game session found";
             TextRenderer.DrawText(e.Graphics, value, targets.Font, e.Bounds, Color.FromArgb(220,220,235), TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
         };
         Controls.Add(targets);
-        SetupButton(refresh, "Refresh", 438, 251, 106, 34, Color.FromArgb(41, 43, 61));
+        SetupButton(refresh, "Refresh", 438, 251, 106, 34, Color.FromArgb(31, 49, 35));
         refresh.Click += delegate { RefreshTargets(); };
-        SetupButton(load, "Load utility mod   →", 36, 309, 508, 49, Color.FromArgb(117, 78, 219));
+        SetupButton(load, "Load utility mod   →", 36, 309, 508, 49, Color.FromArgb(34, 197, 94));
         load.Click += async delegate { await LoadSelected(); };
         status.SetBounds(36, 376, 508, 56); status.ForeColor = muted; status.Font = new Font("Segoe UI", 10);
         Controls.Add(status);
         AddLabel("SMOOTH JETPACK BUILD", 36, 451, 300, 19, 8, muted, FontStyle.Bold);
-        AddLabel("PEGASUS  /  01", 423, 451, 140, 19, 8, muted, FontStyle.Bold);
+        AddLabel("LOKI  /  01", 423, 451, 140, 19, 8, muted, FontStyle.Bold);
         RefreshTargets();
     }
     void AddLabel(string text, int x, int y, int w, int h, float size, Color color, FontStyle style) {
@@ -143,8 +143,8 @@ internal sealed class PegasusForm : Form {
     }
     protected override void OnPaint(PaintEventArgs e) {
         base.OnPaint(e);
-        using (var brush = new LinearGradientBrush(new Rectangle(0,0,Width,5), Color.FromArgb(105,75,240), Color.FromArgb(85,211,232), 0f)) e.Graphics.FillRectangle(brush,0,0,Width,5);
-        using (var pen = new Pen(Color.FromArgb(44,46,66))) { e.Graphics.DrawLine(pen,36,207,544,207); e.Graphics.DrawLine(pen,36,440,544,440); }
+        using (var brush = new LinearGradientBrush(new Rectangle(0,0,Width,5), Color.FromArgb(22,163,74), Color.FromArgb(74,222,128), 0f)) e.Graphics.FillRectangle(brush,0,0,Width,5);
+        using (var pen = new Pen(Color.FromArgb(36,66,44))) { e.Graphics.DrawLine(pen,36,207,544,207); e.Graphics.DrawLine(pen,36,440,544,440); }
     }
     void RefreshTargets() {
         targets.Items.Clear();
@@ -191,7 +191,7 @@ internal static class Loader {
     [DllImport("kernel32.dll", SetLastError=true)] static extern bool IsWow64Process(IntPtr process, out bool wow64);
     internal static void Inject(Process process, string dll) {
         IntPtr handle = OpenProcess(0x043A, false, process.Id);
-        if (handle == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot open the game. Try running Pegasus with the same permissions as Minecraft.");
+        if (handle == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot open the game. Try running Loki with the same permissions as Minecraft.");
         IntPtr memory = IntPtr.Zero, thread = IntPtr.Zero; bool mayFree = true;
         try {
             bool wow64;
