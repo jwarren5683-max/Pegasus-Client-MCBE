@@ -84,6 +84,7 @@ bool Commands::execute(std::string_view text, ModuleManager& modules, std::vecto
         if (args.size() != 1) replies.emplace_back("Usage: .help (no arguments).");
         else {
             replies.emplace_back(std::string(chat_style::aqua)+".help"+chat_style::gray+" - Show commands.");
+            replies.emplace_back(std::string(chat_style::aqua)+".loki"+chat_style::gray+" - Show Loki version and confirmed features.");
             replies.emplace_back(std::string(chat_style::aqua)+".keybind "+chat_style::white+"<module> <key> <toggle|keyhold>"+chat_style::gray+" - Bind a module; quote spaced names.");
             replies.emplace_back(std::string(chat_style::aqua)+".unbind "+chat_style::white+"<module>"+chat_style::gray+" - Remove all key bindings for a module.");
             replies.emplace_back(std::string(chat_style::aqua)+".eject"+chat_style::gray+" - Disable the mod for this session.");
@@ -91,6 +92,13 @@ bool Commands::execute(std::string_view text, ModuleManager& modules, std::vecto
                 for (const auto& line : module->command_help())
                     replies.emplace_back(std::string(chat_style::aqua)+line);
         }
+        return true;
+    }
+    if (name == "loki") {
+        if (args.size()!=1) { replies.emplace_back("Usage: .loki (no arguments)."); return true; }
+        replies.emplace_back(std::string(chat_style::green)+"Loki"+chat_style::gray+" | Minecraft 26.50");
+        replies.emplace_back(std::string(chat_style::gray)+"Confirmed: "+chat_style::aqua+
+            "Reach, Block Reach, X-Ray, Fullbright, ESP, ChestESP, Auto Leave, Auto Bridge");
         return true;
     }
     if (name == "eject") {
