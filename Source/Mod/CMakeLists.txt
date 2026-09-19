@@ -277,6 +277,9 @@ if(BUILD_TESTING)
     target_compile_features(BedrockUtilityMenuTest PRIVATE cxx_std_20)
     add_test(NAME menu_interaction COMMAND BedrockUtilityMenuTest)
     set_tests_properties(menu_interaction PROPERTIES SKIP_RETURN_CODE 77)
+    add_executable(BedrockLegacyMenuToggleTest tests/legacy_menu_toggle_test.cpp)
+    target_compile_features(BedrockLegacyMenuToggleTest PRIVATE cxx_std_20)
+    add_test(NAME legacy_menu_toggle COMMAND BedrockLegacyMenuToggleTest)
 endif()
 
 
