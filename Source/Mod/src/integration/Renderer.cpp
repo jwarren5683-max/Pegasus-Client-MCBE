@@ -27,7 +27,7 @@ bool has_settings(const Module* module) noexcept {
 }
 std::vector<Row> rows_for_category(ModuleManager& manager, ModuleCategory category) {
  std::vector<Row> result;
- for (const auto& m:manager.modules()) if(m->category()==category) result.push_back({m.get()});
+ for (const auto& m:manager.modules()) if(m->category()==category && m->usable()) result.push_back({m.get()});
  return result;
 }
 std::wstring widen(std::string_view text) {
@@ -277,6 +277,8 @@ void Renderer::drag_slider(int x) noexcept {
 void Renderer::legacy_key(int key) noexcept {
     if (menu_visible_ || !world_ready_) return;
     const auto rows = rows_for_category(*modules_, categories[legacy_category_].category);
+    if (rows.empty()) legacy_module_ = 0;
+    else legacy_module_ = (std::min)(legacy_module_, static_cast<int>(rows.size()) - 1);
     if (key == VK_LEFT) legacy_expanded_ = false;
     if (key == VK_RIGHT) {
         if (!legacy_expanded_) { legacy_expanded_ = true; legacy_module_ = 0; }
@@ -385,7 +387,7 @@ void Renderer::paint(HWND window) noexcept {
             align | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
     };
     hits_.clear();
-    if (settings_module_ && !has_settings(settings_module_)) settings_module_ = nullptr;
+    if (settings_module_ && (!settings_module_->usable() || !has_settings(settings_module_))) settings_module_ = nullptr;
     viewport_height_ = (std::max)(1, client_height - 45);
     int y = 16 - scroll_offset_;
     int group_height = 0;
