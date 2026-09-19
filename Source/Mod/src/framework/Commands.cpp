@@ -97,7 +97,12 @@ bool system_clipboard_write(std::string_view text) {
     if(written!=chars){GlobalUnlock(memory);GlobalFree(memory);return false;}
     data[chars]=L'\0';
     GlobalUnlock(memory);
-    if(!OpenClipboard(nullptr)){GlobalFree(memory);return false;}
+    bool opened=false;
+    for(int attempt=0;attempt<5 && !opened;++attempt) {
+        opened=OpenClipboard(nullptr)!=FALSE;
+        if(!opened) Sleep(5);
+    }
+    if(!opened){GlobalFree(memory);return false;}
     bool ok=false;
     if(EmptyClipboard()) ok=SetClipboardData(CF_UNICODETEXT,memory)!=nullptr;
     CloseClipboard();
