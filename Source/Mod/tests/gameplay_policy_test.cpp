@@ -196,6 +196,25 @@ int main(){
     eject_hook(nullptr,nullptr,nullptr,nullptr,nullptr,&local,nullptr,false,nullptr);
     check(eject_calls==2,"disabling Phase restores native ejection");
 
+    DeathPositionTracker death_tracker;
+    Vec3 death{};
+    int death_player{},death_dimension{},death_other_dimension{};
+    check(!death_tracker.update(&death_player,&death_dimension,true,20.0F,true,{10.2F,64.0F,-4.8F},death),
+        "live death tracker sample must not fire");
+    check(!death_tracker.update(&death_player,&death_dimension,false,0.0F,false,{},death),
+        "invalid health sample must not create a death");
+    check(death_tracker.update(&death_player,&death_dimension,true,0.0F,false,{},death)&&
+        std::fabs(death.x-10.2F)<0.001F&&std::fabs(death.y-64.0F)<0.001F&&std::fabs(death.z+4.8F)<0.001F,
+        "26.50 death transition must return the last validated live position");
+    check(!death_tracker.update(&death_player,&death_dimension,true,0.0F,false,{},death),
+        "death transition must only fire once");
+    check(!death_tracker.update(&death_player,&death_dimension,true,20.0F,true,{1,2,3},death),
+        "respawn live sample must rearm without firing");
+    check(!death_tracker.update(&death_player,&death_other_dimension,true,0.0F,false,{},death),
+        "dimension transition must clear stale live position");
+    check(!death_tracker.update(nullptr,nullptr,true,0.0F,false,{},death),
+        "retired player must not reuse a stale death position");
+
     static_assert(sizeof(GameString)==32);
     static_assert(sizeof(OptionalString)==40);
     GameplayModule jump(GameplayFeature::airjump),phase(GameplayFeature::phase),esp(GameplayFeature::esp),leave(GameplayFeature::auto_leave);
