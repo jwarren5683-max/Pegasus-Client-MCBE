@@ -55,7 +55,7 @@ void __fastcall submit_hook(void* controller) {
     auto* field=static_cast<Byte*>(controller)+0xD60;
     const auto native=read<NativeString>(field);
     char* data=native.capacity>=16 ? native.data.pointer : reinterpret_cast<char*>(field);
-    if (!native.size || !readable_game_memory(data,1) || data[0]!=',') {
+    if (!native.size || !readable_game_memory(data,1) || data[0]!=Commands::prefix) {
         original_submit(controller); return;
     }
     // Clear in place, preserving the game's allocation/capacity and allocator.
