@@ -151,6 +151,7 @@ bool Commands::execute(std::string_view text, ModuleManager& modules, std::vecto
             replies.emplace_back(std::string(chat_style::aqua)+".help"+chat_style::gray+" - Show commands.");
             replies.emplace_back(std::string(chat_style::aqua)+".loki"+chat_style::gray+" - Show Loki version and confirmed features.");
             replies.emplace_back(std::string(chat_style::aqua)+".seed"+chat_style::gray+" - Show the current world/server seed supplied to this client.");
+            replies.emplace_back(std::string(chat_style::aqua)+".locate"+chat_style::gray+" - List visible players and their current coordinates.");
             replies.emplace_back(std::string(chat_style::aqua)+".keybind "+chat_style::white+"<module> <key> <toggle|keyhold>"+chat_style::gray+" - Bind a module; quote spaced names.");
             replies.emplace_back(std::string(chat_style::aqua)+".unbind "+chat_style::white+"<module>"+chat_style::gray+" - Remove all key bindings for a module.");
             replies.emplace_back(std::string(chat_style::aqua)+".binds"+chat_style::gray+" - List current Loki key bindings.");
@@ -177,6 +178,39 @@ bool Commands::execute(std::string_view text, ModuleManager& modules, std::vecto
             return true;
         }
         replies.emplace_back(std::string(chat_style::green)+"World Seed: "+chat_style::white+std::to_string(seed));
+        return true;
+    }
+    if (name == "locate") {
+        if(args.size()!=1) { replies.emplace_back("Usage: .locate (no arguments)."); return true; }
+        std::function<integration::PlayerLocatorResult()> locator;
+        {
+            std::lock_guard lock(mutex_);
+            locator=player_locator_;
+        }
+        if(!locator) { replies.emplace_back("Player locator is unavailable in this session."); return true; }
+        const auto result=locator();
+        if(result.status==integration::PlayerLocatorStatus::unavailable) {
+            replies.emplace_back("Player positions are not available yet.");
+            return true;
+        }
+        if(result.status==integration::PlayerLocatorStatus::no_players||result.players.empty()) {
+            replies.emplace_back(std::string(chat_style::yellow)+"No other visible players are in this dimension.");
+            return true;
+        }
+        replies.emplace_back(std::string(chat_style::aqua)+"Visible players (nearest first):");
+        constexpr std::size_t maximum_lines=8;
+        const auto count=(std::min)(result.players.size(),maximum_lines);
+        for(std::size_t index=0;index<count;++index) {
+            const auto& player=result.players[index];
+            char line[160]{};
+            std::snprintf(line,sizeof(line),"Player #%u: %.1f %.1f %.1f (%.1fm)",
+                player.runtime_id&0x3FFFFU,static_cast<double>(player.x),static_cast<double>(player.y),
+                static_cast<double>(player.z),static_cast<double>(player.distance));
+            replies.emplace_back(std::string(chat_style::white)+line);
+        }
+        if(result.players.size()>maximum_lines)
+            replies.emplace_back(std::string(chat_style::gray)+"...and "+
+                std::to_string(result.players.size()-maximum_lines)+" more visible players.");
         return true;
     }
     if (name == "binds") {
@@ -297,6 +331,10 @@ void Commands::set_clipboard_writer(std::function<bool(std::string_view)> writer
     std::lock_guard lock(mutex_);
     clipboard_writer_=std::move(writer);
 }
+void Commands::set_player_locator(std::function<integration::PlayerLocatorResult()> locator) {
+    std::lock_guard lock(mutex_);
+    player_locator_=std::move(locator);
+}
 void Commands::key(unsigned code, bool down, bool gameplay) {
     if (code >= pressed_.size()) return;
     std::lock_guard lock(mutex_);
@@ -319,6 +357,7 @@ void Commands::suspend() {
 }
 void Commands::clear() {
     suspend();
-    std::lock_guard lock(mutex_); bindings_.clear(); pressed_.fill(false); eject_handler_={}; clipboard_writer_={}; eject_pending_=false;
+    std::lock_guard lock(mutex_); bindings_.clear(); pressed_.fill(false); eject_handler_={}; clipboard_writer_={};
+    player_locator_={}; eject_pending_=false;
 }
 }

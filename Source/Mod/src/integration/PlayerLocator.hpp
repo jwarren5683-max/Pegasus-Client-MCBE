@@ -1,0 +1,20 @@
+#pragma once
+
+#include <cstdint>
+#include <vector>
+
+namespace utility::integration {
+
+struct PlayerLocation {
+    std::uint32_t runtime_id{};
+    float x{},y{},z{},distance{};
+};
+
+enum class PlayerLocatorStatus { unavailable, no_players, ready };
+
+struct PlayerLocatorResult {
+    PlayerLocatorStatus status{PlayerLocatorStatus::unavailable};
+    std::vector<PlayerLocation> players;
+};
+
+} // namespace utility::integration

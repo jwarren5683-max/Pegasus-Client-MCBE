@@ -1,11 +1,13 @@
 #pragma once
 #include "../framework/Module.hpp"
+#include "../integration/PlayerLocator.hpp"
 #include <Windows.h>
 
 namespace utility::modules {
 enum class GameplayFeature { esp, autotool, phase, airjump, deathposition, autosprint, chest_esp, triggerbot, jetpack, auto_leave, auto_bridge, count };
 void arm_startup_notice() noexcept;
 void disarm_startup_notice() noexcept;
+integration::PlayerLocatorResult player_locator_snapshot() noexcept;
 class GameplayModule final : public Module {
 public:
     explicit GameplayModule(GameplayFeature feature) : feature_(feature) {}

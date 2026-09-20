@@ -108,6 +108,14 @@ unsigned key_bit(unsigned code) {
 std::atomic<std::uint64_t> local_unique_id{};
 std::mutex frame_mutex;
 Frame frame,storage_frame;
+struct LocatorFrame {
+    std::vector<integration::PlayerLocation> players;
+    void* player{};
+    void* dimension{};
+    double time{};
+    bool valid{};
+};
+LocatorFrame locator_frame;
 std::atomic<unsigned> storage_types{chest_esp::all_types};
 Byte* image{};
 using Tick = void(__fastcall*)(void*);
@@ -777,15 +785,26 @@ void jetpack_movement(void* actor, void* movement, bool control) {
         std::memcpy(static_cast<Byte*>(movement)+24,&next,sizeof(next));
 }
 
-void capture_esp_12650() {
-    static double previous{};const auto now=esp_time();if(now-previous<0.05)return;previous=now;
+void capture_esp_12650(bool visuals) {
+    static double previous{};const auto now=esp_time();
+    if(now-previous<(visuals?0.05:0.2))return;
+    previous=now;
     Frame next;next.player=integration::current_player();
-    struct Publish { Frame& value; ~Publish(){value.time=esp_time();std::lock_guard lock(frame_mutex);frame=std::move(value);} } publish{next};
+    LocatorFrame locator;locator.player=next.player;
+    struct Publish {
+        Frame& value;LocatorFrame& locator;
+        ~Publish(){const auto now=esp_time();value.time=now;locator.time=now;std::lock_guard lock(frame_mutex);
+            frame=std::move(value);locator_frame=std::move(locator);}
+    } publish{next,locator};
     const auto copy=[](std::uintptr_t at,void* out,std::size_t bytes){return camera_read(reinterpret_cast<void*>(at),0,out,bytes);};
     std::uintptr_t registry{};std::uint32_t id{};
     if(!camera_read(next.player,0x10,&registry,sizeof(registry))||
        !camera_read(next.player,0x18,&id,sizeof(id))||
        !camera_read(next.player,0x1C8,&next.dimension,sizeof(next.dimension))||!next.dimension)return;
+    locator.dimension=next.dimension;
+    void* local_movement_state{};Vec3 local_position{};
+    if(!camera_read(next.player,0x218,&local_movement_state,sizeof(local_movement_state))||!local_movement_state||
+       !camera_read(local_movement_state,0,&local_position,sizeof(local_position))||!valid(local_position))return;
     std::vector<esp_snapshot::Actor> actors;
     if(!esp_snapshot::actors(registry,reinterpret_cast<std::uintptr_t>(next.player),id,actors,copy))return;
     next.boxes.reserve(actors.size());
@@ -805,15 +824,25 @@ void capture_esp_12650() {
            !camera_read(actor,0x1C8,&dimension2,sizeof(dimension2))||owner!=registry||actual!=entry.entity||dimension2!=dimension||
            !esp_entity(actor,next.player,dimension,next.dimension,name,box))continue;
         box.player=name=="minecraft:player"||name.starts_with("minecraft:player.");
+        if(!box.player&&!visuals)continue;
         box.color=box.player?RGB(255,50,50):name.starts_with("minecraft:")?RGB(55,135,255):RGB(60,235,90);
         void* state{};Vec3 positions[2]{};
         if(camera_read(actor,0x218,&state,sizeof(state))&&camera_read(state,0,positions,sizeof(positions))){
             const auto movement=minus(positions[0],positions[1]);
             if(valid(movement)&&dot(movement,movement)<16.0F)box.movement=movement;
+            if(box.player&&valid(positions[0])) {
+                const auto delta=minus(positions[0],local_position);
+                locator.players.push_back({entry.entity,positions[0].x,positions[0].y,positions[0].z,
+                    std::sqrt(dot(delta,delta))});
+            }
         }
         next.boxes.push_back(box);
     }
-    if(!next.boxes.empty()&&!esp_snapshot_logged.exchange(true)) {
+    std::sort(locator.players.begin(),locator.players.end(),[](const auto& left,const auto& right){
+        return left.distance<right.distance;
+    });
+    locator.valid=true;
+    if(visuals&&!next.boxes.empty()&&!esp_snapshot_logged.exchange(true)) {
         char message[128]{};std::snprintf(message,sizeof(message),"ESP: native tick published %zu validated entity bounds.",next.boxes.size());
         Logger::instance().info(message);
     }
@@ -841,10 +870,8 @@ void __fastcall esp_tick_12650(void* player) {
         else auto_leave_gate.reset();
     }
     if(auto_bridge_ready.load())auto_bridge_tick(player);
-    if(on(GameplayFeature::esp)) {
-        try {capture_esp_12650();} catch(...) {
-            std::lock_guard lock(frame_mutex);frame=Frame{};
-        }
+    try {capture_esp_12650(on(GameplayFeature::esp));} catch(...) {
+        std::lock_guard lock(frame_mutex);frame=Frame{};locator_frame=LocatorFrame{};
     }
     if(chest_ready.load()&&on(GameplayFeature::chest_esp)) {
         try {capture_storage(player);}catch(...) {std::lock_guard lock(frame_mutex);storage_frame=Frame{};}
@@ -1265,6 +1292,23 @@ void initialize() {
 
 void arm_startup_notice() noexcept { startup_notice.arm(); }
 void disarm_startup_notice() noexcept { startup_notice.disarm(); }
+
+integration::PlayerLocatorResult player_locator_snapshot() noexcept {
+    integration::PlayerLocatorResult result;
+    try {
+        LocatorFrame copy;
+        {std::lock_guard lock(frame_mutex);copy=locator_frame;}
+        auto* current=integration::current_player();
+        void* dimension{};
+        const auto age=esp_time()-copy.time;
+        if(!copy.valid||!current||copy.player!=current||age<0||age>0.3||
+           !camera_read(current,0x1C8,&dimension,sizeof(dimension))||!dimension||dimension!=copy.dimension)return result;
+        result.players=std::move(copy.players);
+        result.status=result.players.empty()?integration::PlayerLocatorStatus::no_players:
+            integration::PlayerLocatorStatus::ready;
+    } catch(...) {}
+    return result;
+}
 
 std::string_view GameplayModule::name() const noexcept {
     constexpr std::string_view names[]{"ESP","Autotool","Phase","Airjump","deathposition","autosprint","ChestESP","triggerbot","Jetpack","Auto Leave","Auto Bridge"};

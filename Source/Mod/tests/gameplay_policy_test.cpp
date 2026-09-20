@@ -159,9 +159,11 @@ int main(){
     void* actor_page[128]{fake_player.data(),live_actor.data(),live_actor.data(),reused_actor.data()};
     void* actor_pages[]{actor_page};
     Vec3 bounds[]{{1,2,3},{2,4,4}};
-    const GameString mob_name("minecraft:chicken");
+    const GameString player_name("minecraft:player");
+    Vec3 local_positions[]{{10,64,-5},{10,64,-5}},remote_positions[]{{13,64,-1},{12.5F,64,-1.5F}};
     write_ptr(fake_player.data()+0x10,registry_data.data());
     write_ptr(fake_player.data()+0x1C8,&dimension_token);
+    write_ptr(fake_player.data()+0x218,local_positions);
     write_ptr(registry_data.data()+0x68,pool_entry.data());
     write_ptr(registry_data.data()+0x70,pool_entry.data()+32);
     const std::uint32_t owner_type=0x85B93800U;
@@ -170,16 +172,22 @@ int main(){
     write_ptr(pool_data.data()+0x50,actor_pages);
     for(auto* actor:{live_actor.data(),reused_actor.data()}) {
         write_ptr(actor+0x10,registry_data.data());write_ptr(actor+0x1C8,&dimension_token);
-        write_ptr(actor+0x220,bounds);std::memcpy(actor+0x240,&mob_name,sizeof(mob_name));
+        write_ptr(actor+0x220,bounds);std::memcpy(actor+0x240,&player_name,sizeof(player_name));
     }
+    write_ptr(live_actor.data()+0x218,remote_positions);
     const std::uint32_t live_id=18,reused_id=0x40013;
     std::memcpy(live_actor.data()+0x18,&live_id,4);std::memcpy(reused_actor.data()+0x18,&reused_id,4);
     capture_esp(fake_player.data());
-    check(frame.boxes.size()==1,"native capture retains live mob and excludes named tombstone and reused-generation ghost");
+    check(frame.boxes.size()==1,"native capture retains live player and excludes named tombstone and reused-generation ghost");
     const std::uint32_t local_id=11;std::memcpy(fake_player.data()+0x18,&local_id,4);
     utility::integration::game_context_detail::player=fake_player.data();
-    capture_esp_12650();
+    capture_esp_12650(true);
     check(frame.boxes.size()==1&&frame.player==fake_player.data(),"26.50 RPM snapshot publishes live bounds without any foreign native actor-list call");
+    const auto locations=player_locator_snapshot();
+    check(locations.status==utility::integration::PlayerLocatorStatus::ready&&locations.players.size()==1&&
+        locations.players[0].runtime_id==18&&std::fabs(locations.players[0].x-13.0F)<0.001F&&
+        std::fabs(locations.players[0].distance-5.0F)<0.001F,
+        "locator publishes copied same-dimension player coordinates sorted from local position");
     fake_client.fill(0);write_ptr(fake_player.data(),image+0xE8E1BC0);
     write_ptr(fake_client.data()+0x1C0,fake_renderer.data());
     std::memcpy(fake_client.data()+0x420,straight,sizeof(straight));
@@ -189,6 +197,8 @@ int main(){
     check(camera_sample(fake_player.data(),new_sample,new_build)&&new_sample.view[0]==1&&new_sample.origin.x==23,
         "26.50 camera decodes shifted +420/+4A0/+1C0 fields and unchanged native origin");
     utility::integration::game_context_detail::player=nullptr;
+    check(player_locator_snapshot().status==utility::integration::PlayerLocatorStatus::unavailable,
+        "locator rejects its snapshot after the local player retires");
     image=nullptr;
 
     original_eject=&mock_eject;int local{},other{};local_state=&local;

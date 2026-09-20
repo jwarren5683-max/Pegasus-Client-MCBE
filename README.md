@@ -16,6 +16,7 @@ Minecraft `1.26.5101.0` (Bedrock 26.50) is now recognized by an exact executable
 - You can type '.help' in the chat while the client is loaded in your game and it will show you some commands the client provides.
 - Type '.loki' to show the current Loki build and the features confirmed working on 26.50.
 - Type '.seed' to show the signed 64-bit seed currently exposed to the client. Remote servers may expose `0` or another server-provided value.
+- Type '.locate' to list up to eight loaded players, nearest first, with their copied coordinates and distance. The test build uses runtime player IDs because the 26.50 gamertag source is not yet verified.
 - Type '.binds' to list the Loki modules currently assigned to keys and whether each binding is toggle or keyhold.
 - Use '.copy seed', '.copy coords', or '.copy binds' to place that Loki information directly on the Windows clipboard.
 - Loki displays `[Loki] Loaded` once after the local player and 26.50 chat UI are ready. The chat submit target, controller/input layout, `GuiData` acquisition, display ABI/RVA, and native reference cleanup are exact-build gated.

@@ -89,8 +89,9 @@ bool Framework::initialize(HMODULE module) noexcept {
         Logger::instance().info("Menu overlay initialization failed.");
     }
     modules_.commands().set_eject_handler([this]{return request_eject();});
+    modules_.commands().set_player_locator([]{return modules::player_locator_snapshot();});
     Logger::instance().info(integration::install_chat_commands(modules_)
-        ? "Local period commands installed: .help, .loki, .seed, .binds, .copy, .keybind, .unbind and .eject."
+        ? "Local period commands installed: .help, .loki, .seed, .locate, .binds, .copy, .keybind, .unbind and .eject."
         : "Local commands unavailable: unsupported chat signature or hook installation failed.");
     integration::reset_world_seed();
     modules::arm_startup_notice();

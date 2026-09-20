@@ -47,8 +47,8 @@ int main() {
         require(!commands.execute(" .help",modules,ordinary),"only leading period is a command");
         require(!commands.execute(",help",modules,ordinary),"legacy comma prefix is still consumed");
         const auto help=execute(".help");
-        require(help.size()==8,"help must contain exactly one row per command");
-        require(help[0].starts_with(".help") && help[1].starts_with(".loki") && help[2].starts_with(".seed") && help[3].starts_with(".keybind") && help[4].starts_with(".unbind") && help[5].starts_with(".binds") && help[6].starts_with(".copy") && help[7].starts_with(".eject"),"help registry");
+        require(help.size()==9,"help must contain exactly one row per command");
+        require(help[0].starts_with(".help") && help[1].starts_with(".loki") && help[2].starts_with(".seed") && help[3].starts_with(".locate") && help[4].starts_with(".keybind") && help[5].starts_with(".unbind") && help[6].starts_with(".binds") && help[7].starts_with(".copy") && help[8].starts_with(".eject"),"help registry");
         for (const auto& line:help) require(line.find('\n')==std::string::npos && line.size()<140,"help must stay concise");
         const auto loki=execute(".loki");
         require(loki.size()==2,"loki command must return two lines");
@@ -64,6 +64,23 @@ int main() {
         integration::publish_world_seed(~std::uint64_t{});
         require(execute(".seed")[0]=="World Seed: -1","signed world seed");
         require(execute(".seed extra")[0].starts_with("Usage: .seed"),"seed arity");
+        require(execute(".locate extra")[0].starts_with("Usage: .locate"),"locator arity");
+        require(execute(".locate")[0].find("unavailable")!=std::string::npos,"missing locator callback");
+        commands.set_player_locator([]{return integration::PlayerLocatorResult{};});
+        require(execute(".locate")[0].find("not available yet")!=std::string::npos,"stale locator feedback");
+        commands.set_player_locator([]{
+            integration::PlayerLocatorResult result;result.status=integration::PlayerLocatorStatus::no_players;return result;
+        });
+        require(execute(".locate")[0].find("No other visible players")!=std::string::npos,"empty locator feedback");
+        commands.set_player_locator([]{
+            integration::PlayerLocatorResult result;result.status=integration::PlayerLocatorStatus::ready;
+            result.players={{0x40013,12.26F,64.0F,-3.5F,4.26F},{7,-20.0F,70.0F,8.0F,19.0F}};return result;
+        });
+        const auto located=execute(".locate");
+        require(located.size()==3&&located[0].starts_with("Visible players")&&
+            located[1].find("Player #19: 12.3 64.0 -3.5 (4.3m)")!=std::string::npos&&
+            located[2].find("Player #7: -20.0 70.0 8.0 (19.0m)")!=std::string::npos,
+            "locator coordinate formatting or runtime-id masking");
         integration::reset_world_seed();
         std::vector<std::string> clipboard;
         commands.set_clipboard_writer([&](std::string_view text){clipboard.emplace_back(text);return true;});
@@ -192,7 +209,7 @@ int main() {
         };
         submit("normal message");submit("/help");submit("hello, world");submit(" .help");
         require(sent==std::vector<std::string>({"normal message","/help","hello, world"," .help"}),"normal native chat changed");
-        submit(".help");submit(".loki");submit(".seed");submit(".binds");submit(".copy binds");submit(".keybind \"Test Module\" G toggle");submit(".unknown");submit(".");submit(".help extra");
+        submit(".help");submit(".loki");submit(".seed");submit(".locate");submit(".binds");submit(".copy binds");submit(".keybind \"Test Module\" G toggle");submit(".unknown");submit(".");submit(".help extra");
         submit(".keybind \"Test Module\" G bad");submit("."+std::string(33000,'x'));
         submit(".unbind \"Test Module\"");submit(".unbind Missing");submit(".unbind");
         require(sent.size()==4,"command leaked into native sender");require(displayed.size()>=7,"missing local feedback");

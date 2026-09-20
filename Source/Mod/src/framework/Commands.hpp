@@ -5,6 +5,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include "../integration/PlayerLocator.hpp"
 
 namespace utility {
 class Module;
@@ -17,6 +18,7 @@ public:
     // The handler only schedules shutdown; it must not destroy modules inline.
     void set_eject_handler(std::function<bool()> handler);
     void set_clipboard_writer(std::function<bool(std::string_view)> writer);
+    void set_player_locator(std::function<integration::PlayerLocatorResult()> locator);
     void key(unsigned key, bool down, bool gameplay);
     void suspend();
     void clear();
@@ -25,6 +27,7 @@ private:
     std::mutex mutex_;
     std::function<bool()> eject_handler_;
     std::function<bool(std::string_view)> clipboard_writer_;
+    std::function<integration::PlayerLocatorResult()> player_locator_;
     bool eject_pending_{};
     std::vector<Binding> bindings_;
     std::array<bool, 256> pressed_{};

@@ -13,7 +13,7 @@ int main(){try {
     const auto call=[&](const char* text){std::vector<std::string> replies;
         require(modules.commands().execute(text,modules,replies),"local command leaked");
         require(!replies.empty(),"no command feedback");return replies;};
-    require(call(".help").size()==14,"navigation help registration");
+    require(call(".help").size()==15,"navigation help registration");
     require(call(".goto 10 20")[0].find("unavailable")!=std::string::npos,"missing native capabilities hidden");
     require(call(".baritone status")[0].find("supported executable")!=std::string::npos,"capability diagnostics missing");
     require(call(".mine -1 stone")[0].find("positive")!=std::string::npos,"syntax not checked before availability");
