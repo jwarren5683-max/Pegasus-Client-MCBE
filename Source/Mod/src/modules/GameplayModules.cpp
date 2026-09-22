@@ -17,10 +17,12 @@
 #include "../integration/NavigationNativeLayout.hpp"
 #include "../integration/BedrockBuild.hpp"
 #include "../framework/Logger.hpp"
+#include "../framework/ChatStyle.hpp"
 #include <TlHelp32.h>
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -34,7 +36,8 @@ using Byte = unsigned char;
 using esp_projection::Frustum;
 struct Vec3 { float x{}, y{}, z{}; };
 struct Box { Vec3 lower, upper; COLORREF color{}; bool player{}; Vec3 movement{}; unsigned storage_kind{}; };
-struct Frame { std::vector<Box> boxes; Vec3 origin; float view[16]{}; float scale_x{}, scale_y{}; double time{}; void* player{}; void* dimension{}; };
+struct Frame { std::vector<Box> boxes; Vec3 origin; float view[16]{}; float scale_x{}, scale_y{}; double time{}; void* player{}; void* dimension{}; Vec3 local_position{}; bool local_position_valid{}; };
+struct Waypoint { std::string name; Vec3 position; };
 std::atomic_bool flags[static_cast<unsigned>(GameplayFeature::count)]{};
 std::atomic_bool players_only{}, ready{}, attempted{};
 std::atomic<unsigned> pending_keys{};
@@ -43,6 +46,12 @@ std::atomic_bool trigger_ready{},airjump_ready{};
 std::atomic_bool esp_ready{};
 std::atomic_bool chest_ready{},chest_snapshot_logged{},chest_draw_logged{};
 std::atomic_bool esp_snapshot_logged{},esp_draw_logged{};
+std::atomic<float> navigation_range{64.0F};
+std::array<std::atomic_bool,2> navigation_settings{true,true};
+std::mutex navigation_mutex;
+std::vector<Waypoint> navigation_waypoints;
+void* navigation_player{};
+void* navigation_dimension{};
 airjump::Requests airjump_requests;
 std::atomic<float> jetpack_speed{jetpack::default_speed};
 std::atomic<unsigned> jetpack_revision{};
@@ -135,7 +144,7 @@ void release_trigger_mouse();
 void auto_bridge_tick(void* player);
 
 bool on(GameplayFeature feature) {
-    if(integration::server_safety::remote_session() && feature!=GameplayFeature::auto_leave&&feature!=GameplayFeature::esp&&feature!=GameplayFeature::chest_esp) return false;
+    if(integration::server_safety::remote_session() && feature!=GameplayFeature::auto_leave&&feature!=GameplayFeature::esp&&feature!=GameplayFeature::chest_esp&&feature!=GameplayFeature::navigation_hud) return false;
     if(integration::navigation_owns_controls.load() &&
        (feature==GameplayFeature::autotool||feature==GameplayFeature::phase||feature==GameplayFeature::airjump||
         feature==GameplayFeature::autosprint||feature==GameplayFeature::triggerbot||feature==GameplayFeature::jetpack||
@@ -786,6 +795,11 @@ void capture_esp_12650() {
     if(!camera_read(next.player,0x10,&registry,sizeof(registry))||
        !camera_read(next.player,0x18,&id,sizeof(id))||
        !camera_read(next.player,0x1C8,&next.dimension,sizeof(next.dimension))||!next.dimension)return;
+    void* local_state_pointer{};
+    Vec3 local_positions[2]{};
+    next.local_position_valid=camera_read(next.player,0x218,&local_state_pointer,sizeof(local_state_pointer))&&
+        local_state_pointer&&camera_read(local_state_pointer,0,local_positions,sizeof(local_positions))&&valid(local_positions[0]);
+    if(next.local_position_valid)next.local_position=local_positions[0];
     std::vector<esp_snapshot::Actor> actors;
     if(!esp_snapshot::actors(registry,reinterpret_cast<std::uintptr_t>(next.player),id,actors,copy))return;
     next.boxes.reserve(actors.size());
@@ -812,6 +826,13 @@ void capture_esp_12650() {
             if(valid(movement)&&dot(movement,movement)<16.0F)box.movement=movement;
         }
         next.boxes.push_back(box);
+    }
+    if(on(GameplayFeature::navigation_hud)&&next.local_position_valid) {
+        std::lock_guard lock(navigation_mutex);
+        if(navigation_player!=next.player||navigation_dimension!=next.dimension) {
+            navigation_waypoints.clear();
+            navigation_player=next.player;navigation_dimension=next.dimension;
+        }
     }
     if(!next.boxes.empty()&&!esp_snapshot_logged.exchange(true)) {
         char message[128]{};std::snprintf(message,sizeof(message),"ESP: native tick published %zu validated entity bounds.",next.boxes.size());
@@ -841,7 +862,7 @@ void __fastcall esp_tick_12650(void* player) {
         else auto_leave_gate.reset();
     }
     if(auto_bridge_ready.load())auto_bridge_tick(player);
-    if(on(GameplayFeature::esp)) {
+    if(on(GameplayFeature::esp)||on(GameplayFeature::navigation_hud)) {
         try {capture_esp_12650();} catch(...) {
             std::lock_guard lock(frame_mutex);frame=Frame{};
         }
@@ -1267,12 +1288,12 @@ void arm_startup_notice() noexcept { startup_notice.arm(); }
 void disarm_startup_notice() noexcept { startup_notice.disarm(); }
 
 std::string_view GameplayModule::name() const noexcept {
-    constexpr std::string_view names[]{"ESP","Autotool","Phase","Airjump","deathposition","autosprint","ChestESP","triggerbot","Jetpack","Auto Leave","Auto Bridge"};
+    constexpr std::string_view names[]{"ESP","Autotool","Phase","Airjump","deathposition","autosprint","ChestESP","triggerbot","Jetpack","Auto Leave","Auto Bridge","Navigation HUD"};
     return names[static_cast<unsigned>(feature_)];
 }
 ModuleCategory GameplayModule::category() const noexcept {
     switch(feature_){case GameplayFeature::triggerbot:case GameplayFeature::auto_leave:return ModuleCategory::combat;
-    case GameplayFeature::esp:case GameplayFeature::chest_esp:return ModuleCategory::visual;
+    case GameplayFeature::esp:case GameplayFeature::chest_esp:case GameplayFeature::navigation_hud:return ModuleCategory::visual;
     case GameplayFeature::autotool:case GameplayFeature::deathposition:return ModuleCategory::player;
     default:return ModuleCategory::movement;}
 }
@@ -1291,7 +1312,7 @@ bool GameplayModule::available() const noexcept {
             camera_read(player,0x220,&shape,sizeof(shape))&&shape&&
             camera_read(shape,0,&position,sizeof(position))&&valid(position);
     }
-    if(feature_==GameplayFeature::esp||(feature_==GameplayFeature::chest_esp&&integration::is_release_12650(integration::current_bedrock_build()))) {
+    if(feature_==GameplayFeature::esp||feature_==GameplayFeature::navigation_hud||(feature_==GameplayFeature::chest_esp&&integration::is_release_12650(integration::current_bedrock_build()))) {
         if(integration::is_release_12650(integration::current_bedrock_build())) {
             static std::mutex validation_mutex;std::lock_guard lock(validation_mutex);
             static double previous{};const double now=esp_time();
@@ -1313,37 +1334,47 @@ bool GameplayModule::available() const noexcept {
         (feature_!=GameplayFeature::airjump || airjump_ready.load()) && (feature_!=GameplayFeature::triggerbot ||
         (trigger_ready.load() && integration::game_context_detail::picker_ready.load()));
 }
-bool GameplayModule::allowed_on_remote_server() const noexcept { return feature_==GameplayFeature::auto_leave||feature_==GameplayFeature::esp||feature_==GameplayFeature::chest_esp; }
+bool GameplayModule::allowed_on_remote_server() const noexcept { return feature_==GameplayFeature::auto_leave||feature_==GameplayFeature::esp||feature_==GameplayFeature::chest_esp||feature_==GameplayFeature::navigation_hud; }
 void GameplayModule::on_register(EventBus&) { initialize(); }
 void GameplayModule::on_enable() { if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;Logger::instance().info("Trigger Bot enabled for local-world input delivery.");} if(feature_==GameplayFeature::auto_leave){++auto_leave_revision;Logger::instance().info("Auto Leave enabled.");} if(feature_==GameplayFeature::auto_bridge)Logger::instance().info("Auto Bridge enabled: keyboard V+W+Space or controller LB/RB/RT + left-stick-forward + A; look down."); flags[static_cast<unsigned>(feature_)]=true; }
 void GameplayModule::on_disable() { flags[static_cast<unsigned>(feature_)]=false; if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;release_trigger_mouse();Logger::instance().info("Trigger Bot disabled.");} if(feature_==GameplayFeature::auto_leave)++auto_leave_revision; if(feature_==GameplayFeature::auto_bridge)Logger::instance().info("Auto Bridge disabled."); }
-bool GameplayModule::has_value() const noexcept { return feature_==GameplayFeature::jetpack||feature_==GameplayFeature::auto_leave; }
-std::string_view GameplayModule::value_label() const noexcept { return feature_==GameplayFeature::auto_leave?"Leave at":"Speed"; }
-std::string_view GameplayModule::value_suffix() const noexcept { return feature_==GameplayFeature::auto_leave?" hearts":" blocks/s"; }
-float GameplayModule::value() const noexcept { return feature_==GameplayFeature::auto_leave?auto_leave_hearts.load():feature_==GameplayFeature::jetpack?jetpack_speed.load():0.0F; }
-float GameplayModule::minimum_value() const noexcept { return feature_==GameplayFeature::auto_leave?auto_leave::minimum_hearts:feature_==GameplayFeature::jetpack?jetpack::minimum_speed:0.0F; }
-float GameplayModule::maximum_value() const noexcept { return feature_==GameplayFeature::auto_leave?auto_leave::maximum_hearts:feature_==GameplayFeature::jetpack?jetpack::maximum_speed:0.0F; }
+bool GameplayModule::has_value() const noexcept { return feature_==GameplayFeature::jetpack||feature_==GameplayFeature::auto_leave||feature_==GameplayFeature::navigation_hud; }
+std::string_view GameplayModule::value_label() const noexcept { return feature_==GameplayFeature::auto_leave?"Leave at":feature_==GameplayFeature::navigation_hud?"Range":"Speed"; }
+std::string_view GameplayModule::value_suffix() const noexcept { return feature_==GameplayFeature::auto_leave?" hearts":feature_==GameplayFeature::navigation_hud?" blocks":" blocks/s"; }
+float GameplayModule::value() const noexcept { return feature_==GameplayFeature::auto_leave?auto_leave_hearts.load():feature_==GameplayFeature::jetpack?jetpack_speed.load():feature_==GameplayFeature::navigation_hud?navigation_range.load():0.0F; }
+float GameplayModule::minimum_value() const noexcept { return feature_==GameplayFeature::auto_leave?auto_leave::minimum_hearts:feature_==GameplayFeature::jetpack?jetpack::minimum_speed:feature_==GameplayFeature::navigation_hud?32.0F:0.0F; }
+float GameplayModule::maximum_value() const noexcept { return feature_==GameplayFeature::auto_leave?auto_leave::maximum_hearts:feature_==GameplayFeature::jetpack?jetpack::maximum_speed:feature_==GameplayFeature::navigation_hud?128.0F:0.0F; }
+int GameplayModule::value_decimals() const noexcept { return feature_==GameplayFeature::navigation_hud?0:1; }
 void GameplayModule::set_value(float value) noexcept {
     if(feature_==GameplayFeature::auto_leave){auto_leave_hearts.store(auto_leave::clamp_hearts(value));return;}
     if(feature_==GameplayFeature::jetpack&&std::isfinite(value))jetpack_speed.store(std::clamp(value,minimum_value(),maximum_value()));
+    if(feature_==GameplayFeature::navigation_hud&&std::isfinite(value))navigation_range.store(std::clamp(std::round(value/8.0F)*8.0F,minimum_value(),maximum_value()));
 }
-void GameplayModule::adjust_value(int direction) noexcept { if(direction)set_value(value()+(direction<0?(feature_==GameplayFeature::auto_leave?-0.5F:-1.0F):(feature_==GameplayFeature::auto_leave?0.5F:1.0F))); }
+void GameplayModule::adjust_value(int direction) noexcept {
+    if(!direction)return;
+    const float step=feature_==GameplayFeature::auto_leave?0.5F:feature_==GameplayFeature::navigation_hud?8.0F:1.0F;
+    set_value(value()+(direction<0?-step:step));
+}
 std::string_view GameplayModule::boolean_setting_name() const noexcept { return feature_==GameplayFeature::esp ? "Players only" : ""; }
 bool GameplayModule::boolean_setting() const noexcept { return players_only.load(); }
 void GameplayModule::set_boolean_setting(bool value) noexcept { if(feature_==GameplayFeature::esp)players_only=value; }
 std::size_t GameplayModule::boolean_setting_count() const noexcept {
+    if(feature_==GameplayFeature::navigation_hud)return 2;
     if(feature_==GameplayFeature::triggerbot)return 2;
     return feature_==GameplayFeature::chest_esp?chest_esp::kind_count:Module::boolean_setting_count();
 }
 std::string_view GameplayModule::boolean_setting_name(std::size_t index) const noexcept {
+    if(feature_==GameplayFeature::navigation_hud){constexpr std::string_view labels[]{"Entity dots","Waypoints"};return index<2?labels[index]:std::string_view{};}
     if(feature_==GameplayFeature::triggerbot)return index==0?"Mobs":index==1?"Players":"";
     return feature_==GameplayFeature::chest_esp?(index<chest_esp::kind_count?chest_esp::labels[index]:std::string_view{}):Module::boolean_setting_name(index);
 }
 bool GameplayModule::boolean_setting(std::size_t index) const noexcept {
+    if(feature_==GameplayFeature::navigation_hud)return index<2&&navigation_settings[index].load();
     if(feature_==GameplayFeature::triggerbot)return index<2 && (trigger_targets.load()&(1U<<index))!=0;
     return feature_==GameplayFeature::chest_esp?(index<chest_esp::kind_count&&(storage_types.load()&(1U<<index))!=0):Module::boolean_setting(index);
 }
 void GameplayModule::set_boolean_setting(std::size_t index,bool value) noexcept {
+    if(feature_==GameplayFeature::navigation_hud){if(index<2)navigation_settings[index]=value;return;}
     if(feature_==GameplayFeature::triggerbot){
         if(index<2){if(value)trigger_targets.fetch_or(1U<<index);else trigger_targets.fetch_and(~(1U<<index));++trigger_revision;}
         return;
@@ -1360,7 +1391,83 @@ void GameplayModule::on_key_down(unsigned code) noexcept {
 void GameplayModule::on_key_up(unsigned code) noexcept {
     if(feature_==GameplayFeature::airjump&&code==VK_SPACE)airjump_requests.release();
 }
+std::vector<std::string> GameplayModule::command_help() const {
+    if(feature_!=GameplayFeature::navigation_hud)return {};
+    return {".waypoint <add NAME|remove NAME|list|clear> - Manage Navigation HUD session waypoints."};
+}
+bool GameplayModule::handle_command(const std::vector<std::string>& args,std::vector<std::string>& replies) {
+    if(feature_!=GameplayFeature::navigation_hud||args.empty())return false;
+    auto lower=[](std::string_view value){std::string result(value);for(auto& c:result)c=static_cast<char>(std::tolower(static_cast<unsigned char>(c)));return result;};
+    if(lower(args[0])!="waypoint")return false;
+    constexpr auto usage="Usage: .waypoint <add NAME|remove NAME|list|clear> (quote names containing spaces).";
+    if(args.size()<2){replies.emplace_back(usage);return true;}
+    const auto action=lower(args[1]);
+    if(action=="add") {
+        if(args.size()!=3||args[2].empty()||args[2].size()>32){replies.emplace_back(usage);return true;}
+        Frame current;{std::lock_guard lock(frame_mutex);current=frame;}
+        if(!current.local_position_valid||!current.player||!current.dimension||esp_time()-current.time>0.5) {
+            replies.emplace_back("Enter a world and enable Navigation HUD before adding a waypoint.");return true;
+        }
+        std::lock_guard lock(navigation_mutex);
+        const auto key=lower(args[2]);
+        const auto duplicate=std::find_if(navigation_waypoints.begin(),navigation_waypoints.end(),[&](const Waypoint& waypoint){return lower(waypoint.name)==key;});
+        if(duplicate!=navigation_waypoints.end()){replies.emplace_back("A waypoint with that name already exists.");return true;}
+        navigation_waypoints.push_back({args[2],current.local_position});
+        replies.emplace_back(std::string(chat_style::green)+"Waypoint added: "+chat_style::aqua+args[2]);return true;
+    }
+    if(action=="remove") {
+        if(args.size()!=3){replies.emplace_back(usage);return true;}
+        std::lock_guard lock(navigation_mutex);const auto key=lower(args[2]);
+        const auto removed=std::erase_if(navigation_waypoints,[&](const Waypoint& waypoint){return lower(waypoint.name)==key;});
+        if(!removed)replies.emplace_back("Waypoint not found: "+args[2]);
+        else replies.emplace_back(std::string(chat_style::green)+"Waypoint removed: "+chat_style::aqua+args[2]);
+        return true;
+    }
+    if(action=="list") {
+        if(args.size()!=2){replies.emplace_back(usage);return true;}
+        std::lock_guard lock(navigation_mutex);
+        if(navigation_waypoints.empty()){replies.emplace_back(std::string(chat_style::yellow)+"No session waypoints.");return true;}
+        replies.emplace_back(std::string(chat_style::aqua)+"Session waypoints:");
+        for(const auto& waypoint:navigation_waypoints) {
+            char line[160]{};std::snprintf(line,sizeof(line),"%s%s%s: %.1f, %.1f, %.1f",chat_style::white,waypoint.name.c_str(),chat_style::gray,
+                static_cast<double>(waypoint.position.x),static_cast<double>(waypoint.position.y),static_cast<double>(waypoint.position.z));
+            replies.emplace_back(line);
+        }
+        return true;
+    }
+    if(action=="clear") {
+        if(args.size()!=2){replies.emplace_back(usage);return true;}
+        std::lock_guard lock(navigation_mutex);navigation_waypoints.clear();
+        replies.emplace_back(std::string(chat_style::green)+"Session waypoints cleared.");return true;
+    }
+    replies.emplace_back(usage);return true;
+}
 void GameplayModule::draw_overlay(void* target,int width,int height) noexcept {
+    if(feature_==GameplayFeature::navigation_hud) {
+        if(!enabled()||!available())return;
+        Frame copy;{std::lock_guard lock(frame_mutex);copy=frame;}
+        const double age=esp_time()-copy.time;
+        if(!copy.local_position_valid||age<0||age>0.2)return;
+        std::vector<Waypoint> waypoints;
+        {std::lock_guard lock(navigation_mutex);if(navigation_player!=copy.player||navigation_dimension!=copy.dimension)return;waypoints=navigation_waypoints;}
+        auto dc=static_cast<HDC>(target);if(!dc)return;
+        const int size=176,left=std::max(12,width-size-18),top=18,cx=left+size/2,cy=top+size/2,inside=size/2-10;
+        RECT background{left,top,left+size,top+size};auto background_brush=CreateSolidBrush(RGB(18,22,27));FillRect(dc,&background,background_brush);DeleteObject(background_brush);
+        auto border=CreatePen(PS_SOLID,2,RGB(60,220,240));auto old_pen=SelectObject(dc,border);auto hollow=SelectObject(dc,GetStockObject(HOLLOW_BRUSH));
+        Ellipse(dc,left+2,top+2,left+size-2,top+size-2);MoveToEx(dc,cx,top+5,nullptr);LineTo(dc,cx,top+12);MoveToEx(dc,left+5,cy,nullptr);LineTo(dc,left+12,cy);
+        SelectObject(dc,old_pen);SelectObject(dc,hollow);DeleteObject(border);
+        const float scale=inside/navigation_range.load();
+        const auto point=[&](Vec3 position,bool clamp){
+            float dx=(position.x-copy.local_position.x)*scale,dz=(position.z-copy.local_position.z)*scale;
+            const float length=std::sqrt(dx*dx+dz*dz);if(clamp&&length>inside&&length>0){dx*=inside/length;dz*=inside/length;}
+            return POINT{cx+static_cast<LONG>(dx),cy+static_cast<LONG>(dz)};
+        };
+        auto dot=[&](POINT p,int radius,COLORREF color){auto brush=CreateSolidBrush(color);auto previous=SelectObject(dc,brush);Ellipse(dc,p.x-radius,p.y-radius,p.x+radius+1,p.y+radius+1);SelectObject(dc,previous);DeleteObject(brush);};
+        if(navigation_settings[0].load())for(const auto& box:copy.boxes){Vec3 position{(box.lower.x+box.upper.x)*0.5F,(box.lower.y+box.upper.y)*0.5F,(box.lower.z+box.upper.z)*0.5F};const auto offset=interpolated_offset(box,age);position.x+=offset.x;position.z+=offset.z;const auto p=point(position,false);if(p.x>=left+4&&p.x<=left+size-4&&p.y>=top+4&&p.y<=top+size-4)dot(p,box.player?3:2,box.player?RGB(255,70,70):RGB(80,150,255));}
+        const int old_mode=SetBkMode(dc,TRANSPARENT);const auto old_color=SetTextColor(dc,RGB(235,235,235));TextOutA(dc,cx-4,top+5,"N",1);
+        if(navigation_settings[1].load())for(const auto& waypoint:waypoints){const auto p=point(waypoint.position,true);POINT diamond[]{{p.x,p.y-5},{p.x+5,p.y},{p.x,p.y+5},{p.x-5,p.y}};auto brush=CreateSolidBrush(RGB(255,210,55));auto previous=SelectObject(dc,brush);Polygon(dc,diamond,4);SelectObject(dc,previous);DeleteObject(brush);const float dx=waypoint.position.x-copy.local_position.x,dz=waypoint.position.z-copy.local_position.z;char label[64]{};std::snprintf(label,sizeof(label),"%s %.0fm",waypoint.name.c_str(),static_cast<double>(std::sqrt(dx*dx+dz*dz)));TextOutA(dc,p.x+7,p.y-7,label,static_cast<int>(std::strlen(label)));}
+        dot({cx,cy},4,RGB(70,235,130));SetTextColor(dc,old_color);SetBkMode(dc,old_mode);return;
+    }
     const bool storage=feature_==GameplayFeature::chest_esp;
     if((feature_!=GameplayFeature::esp&&!storage)||!enabled()||!available())return;
     Frame copy;{std::lock_guard lock(frame_mutex);copy=storage?storage_frame:frame;}

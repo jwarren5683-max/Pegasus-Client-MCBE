@@ -3,7 +3,7 @@
 #include <Windows.h>
 
 namespace utility::modules {
-enum class GameplayFeature { esp, autotool, phase, airjump, deathposition, autosprint, chest_esp, triggerbot, jetpack, auto_leave, auto_bridge, count };
+enum class GameplayFeature { esp, autotool, phase, airjump, deathposition, autosprint, chest_esp, triggerbot, jetpack, auto_leave, auto_bridge, navigation_hud, count };
 void arm_startup_notice() noexcept;
 void disarm_startup_notice() noexcept;
 class GameplayModule final : public Module {
@@ -19,6 +19,7 @@ public:
     float value() const noexcept override;
     float minimum_value() const noexcept override;
     float maximum_value() const noexcept override;
+    int value_decimals() const noexcept override;
     void set_value(float value) noexcept override;
     void adjust_value(int direction) noexcept override;
     void on_register(EventBus&) override;
@@ -34,6 +35,8 @@ public:
     void on_key_down(unsigned key) noexcept override;
     void on_key_up(unsigned key) noexcept override;
     void draw_overlay(void* device, int width, int height) noexcept override;
+    bool handle_command(const std::vector<std::string>& args, std::vector<std::string>& replies) override;
+    std::vector<std::string> command_help() const override;
 private:
     GameplayFeature feature_;
 };

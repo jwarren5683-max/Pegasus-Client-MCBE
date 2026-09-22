@@ -262,6 +262,26 @@ int main(){
         "Auto Leave exposes a four-heart default slider");
     leave_settings.set_value(3.26F);check(leave_settings.value()==3.5F,"Auto Leave snaps to half hearts");
     leave_settings.adjust_value(-1);check(leave_settings.value()==3.0F,"Auto Leave slider uses half-heart steps");
+    GameplayModule navigation_hud(GameplayFeature::navigation_hud);
+    utility::Module& navigation_settings_module=navigation_hud;
+    check(navigation_hud.name()=="Navigation HUD"&&navigation_hud.category()==utility::ModuleCategory::visual&&
+        navigation_hud.allowed_on_remote_server(),"Navigation HUD is a read-only remote-capable visual module");
+    check(navigation_settings_module.has_value()&&navigation_settings_module.value_label()=="Range"&&
+        navigation_settings_module.value_suffix()==" blocks"&&navigation_settings_module.value()==64.0F&&
+        navigation_settings_module.value_decimals()==0,"Navigation HUD exposes its map range");
+    navigation_settings_module.set_value(69.0F);check(navigation_settings_module.value()==72.0F,"Navigation range snaps to eight blocks");
+    navigation_settings_module.adjust_value(-1);check(navigation_settings_module.value()==64.0F,"Navigation range adjustment uses eight-block steps");
+    check(navigation_settings_module.boolean_setting_count()==2&&
+        navigation_settings_module.boolean_setting_name(0)=="Entity dots"&&
+        navigation_settings_module.boolean_setting_name(1)=="Waypoints","Navigation HUD exposes radar and waypoint display settings");
+    navigation_settings_module.set_boolean_setting(1,false);check(!navigation_settings_module.boolean_setting(1)&&navigation_settings_module.boolean_setting(0),"Navigation display settings are independent");
+    navigation_settings_module.set_boolean_setting(1,true);
+    frame=Frame{};frame.player=&death_player;frame.dimension=&death_dimension;frame.local_position={12.5F,64.0F,-7.25F};frame.local_position_valid=true;frame.time=esp_time();
+    navigation_player=frame.player;navigation_dimension=frame.dimension;navigation_waypoints.clear();
+    std::vector<std::string> waypoint_replies;
+    check(navigation_hud.handle_command({"waypoint","add","Home Base"},waypoint_replies)&&navigation_waypoints.size()==1&&navigation_waypoints[0].name=="Home Base","waypoint command captures the latest validated local position");
+    waypoint_replies.clear();check(navigation_hud.handle_command({"waypoint","list"},waypoint_replies)&&waypoint_replies.size()==2,"waypoint list reports saved session points");
+    waypoint_replies.clear();check(navigation_hud.handle_command({"waypoint","remove","home base"},waypoint_replies)&&navigation_waypoints.empty(),"waypoint removal is case-insensitive");
     using chest_esp::Kind;
     check(chest_esp::classify("minecraft:barrel")==Kind::barrel,"barrel classification");
     check(chest_esp::classify("minecraft:chest")==Kind::chest,"chest classification");
