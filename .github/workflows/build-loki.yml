@@ -1,4 +1,4 @@
-name: Build Pegasus
+name: Build Loki
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
     branches:
       - main
       - bedrock-26.50-prep
-      - codex/pegasus-enhanced-reach-triggerbot-20260915
+      - codex/loki-enhanced-reach-triggerbot-20260915
       - codex/bedrock-26.50-repair
       - codex/xray-lifecycle-20260916
   pull_request:
@@ -22,24 +22,24 @@ jobs:
 
       - name: Configure native mod
         shell: pwsh
-        run: cmake -S './Source/Mod' -B 'C:/pegasus-build' -G 'Visual Studio 17 2022' -A x64
+        run: cmake -S './Source/Mod' -B 'C:/loki-build' -G 'Visual Studio 17 2022' -A x64
 
       - name: Build native mod and compatibility scanner
         shell: pwsh
-        run: cmake --build 'C:/pegasus-build' --config Release --clean-first --parallel 4
+        run: cmake --build 'C:/loki-build' --config Release --clean-first --parallel 4
 
       - name: Run native tests
         shell: pwsh
-        run: ctest --test-dir 'C:/pegasus-build' -C Release --output-on-failure
+        run: ctest --test-dir 'C:/loki-build' -C Release --output-on-failure
 
       - name: Stage DLL and pin injector hash
         shell: pwsh
         run: |
-          $dll = 'C:/pegasus-build/Release/BedrockUtilityFramework.Xray.dll'
+          $dll = 'C:/loki-build/Release/BedrockUtilityFramework.Xray.dll'
           if (!(Test-Path $dll)) { throw "Native DLL was not produced: $dll" }
           Copy-Item $dll './BedrockUtilityFramework.Xray.dll' -Force
           $hash = (Get-FileHash './BedrockUtilityFramework.Xray.dll' -Algorithm SHA256).Hash
-          $sourcePath = './Source/Injector/Pegasus.cs'
+          $sourcePath = './Source/Injector/Loki.cs'
           $source = Get-Content $sourcePath -Raw
           $updated = [regex]::Replace(
             $source,
@@ -57,37 +57,37 @@ jobs:
       - name: Run injector self-test
         shell: pwsh
         run: |
-          $test = Start-Process -FilePath './Pegasus.exe' -ArgumentList '--self-test' -Wait -PassThru
+          $test = Start-Process -FilePath './Loki.exe' -ArgumentList '--self-test' -Wait -PassThru
           if ($test.ExitCode -ne 0) {
             if (Test-Path './self-test-result.txt') { Get-Content './self-test-result.txt' }
-            throw "Pegasus self-test exited with code $($test.ExitCode)"
+            throw "Loki self-test exited with code $($test.ExitCode)"
           }
           $result = Get-Content './self-test-result.txt' -Raw
           Write-Host $result
-          if (!$result.StartsWith('PASS:')) { throw "Pegasus self-test failed: $result" }
+          if (!$result.StartsWith('PASS:')) { throw "Loki self-test failed: $result" }
 
       - name: Verify and stage package
         shell: pwsh
         run: |
-          $scanner = 'C:/pegasus-build/Release/BedrockCompatibilityScanner.exe'
+          $scanner = 'C:/loki-build/Release/BedrockCompatibilityScanner.exe'
           if (!(Test-Path $scanner)) { throw 'Compatibility scanner is missing.' }
-          New-Item -ItemType Directory -Path './artifact/Pegasus/tools' -Force | Out-Null
-          Copy-Item './Pegasus.exe' './artifact/Pegasus/'
-          Copy-Item './BedrockUtilityFramework.Xray.dll' './artifact/Pegasus/'
-          Copy-Item './README.md' './artifact/Pegasus/'
-          Copy-Item './BUILDING.md' './artifact/Pegasus/'
-          Copy-Item './BEDROCK_26_50.md' './artifact/Pegasus/'
-          Copy-Item './TESTING_26_50.md' './artifact/Pegasus/'
-          Copy-Item './self-test-result.txt' './artifact/Pegasus/'
-          Copy-Item $scanner './artifact/Pegasus/tools/'
-          Get-FileHash './artifact/Pegasus/Pegasus.exe' -Algorithm SHA256 | Format-List
-          Get-FileHash './artifact/Pegasus/BedrockUtilityFramework.Xray.dll' -Algorithm SHA256 | Format-List
+          New-Item -ItemType Directory -Path './artifact/Loki/tools' -Force | Out-Null
+          Copy-Item './Loki.exe' './artifact/Loki/'
+          Copy-Item './BedrockUtilityFramework.Xray.dll' './artifact/Loki/'
+          Copy-Item './README.md' './artifact/Loki/'
+          Copy-Item './BUILDING.md' './artifact/Loki/'
+          Copy-Item './BEDROCK_26_50.md' './artifact/Loki/'
+          Copy-Item './TESTING_26_50.md' './artifact/Loki/'
+          Copy-Item './self-test-result.txt' './artifact/Loki/'
+          Copy-Item $scanner './artifact/Loki/tools/'
+          Get-FileHash './artifact/Loki/Loki.exe' -Algorithm SHA256 | Format-List
+          Get-FileHash './artifact/Loki/BedrockUtilityFramework.Xray.dll' -Algorithm SHA256 | Format-List
 
       - name: Upload downloadable build
         uses: actions/upload-artifact@v4
         with:
-          name: Pegasus-Windows-x64-${{ github.sha }}
-          path: artifact/Pegasus
+          name: Loki-Windows-x64-${{ github.sha }}
+          path: artifact/Loki
           if-no-files-found: error
           retention-days: 14
 

@@ -70,9 +70,9 @@ callback slider ranges and the final crosshair gate when they execute. Working
 X-ray and Fullbright code is unchanged. Remote servers can still reject extended
 interactions; this repair does not bypass server enforcement.
 
-1. Fully close Minecraft and any older Pegasus launcher.
+1. Fully close Minecraft and any older Loki launcher.
 2. Start Minecraft and enter a local world.
-3. Run `START THIS - Pegasus Native Xray Fix.exe` once and select the fresh
+3. Run `START THIS - Loki Native Xray Fix.exe` once and select the fresh
    visible game session. The diagnostic `--inject-pid PID` option selects an
    exact Minecraft process without changing file permissions; it rejects
    other applications and uses the existing duplicate-DLL safeguard.

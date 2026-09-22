@@ -46,7 +46,7 @@ projected edges submitted. The local-world visible result is now user-confirmed.
 X-ray and Fullbright were user-confirmed working before the reach regression;
 the startup-retry change needs a fresh-session visual regression check.
 
-Use the launcher in the existing Desktop/Pegasus Clients/Native Xray Fix folder.
+Use the launcher in the existing Desktop/Loki Client Folder/Native Xray Fix folder.
 Keep its bundled DLL beside it. Do not inject into an already modified session:
 the DLL and native callbacks remain pinned until Minecraft closes normally.
 Leave Players only OFF for a mob test. Enable ESP in Visual; nearby mob outlines

@@ -1,6 +1,6 @@
 # Auto Bridge test candidate — Minecraft Bedrock 1.26.5101.0
 
-This is a separate, reversible test build. Existing Pegasus clients are not
+This is a separate, reversible test build. Existing Loki clients are not
 replaced.
 
 ## How it works

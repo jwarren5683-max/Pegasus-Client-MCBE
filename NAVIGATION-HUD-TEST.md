@@ -4,7 +4,7 @@ This test build adds a north-up local radar and session waypoints for Minecraft 
 
 ## Test steps
 
-1. Start a fresh Minecraft session and load Loki with the included `Pegasus.exe`.
+1. Start a fresh Minecraft session and load Loki with the included `Loki.exe`.
 2. Join a world or server, press **Tab**, open **Visual**, and enable **Navigation HUD**.
 3. Confirm the green center dot stays fixed, loaded mobs appear blue, and loaded players appear red.
 4. Adjust **Range** in the module settings. It supports 32–128 blocks.

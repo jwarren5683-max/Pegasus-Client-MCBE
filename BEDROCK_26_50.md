@@ -1,6 +1,6 @@
 # Minecraft Bedrock 26.50 repair status
 
-Pegasus now recognizes the installed release build `1.26.5101.0` exactly:
+Loki now recognizes the installed release build `1.26.5101.0` exactly:
 
 - PE timestamp: `0x6AA482FD`
 - PE `SizeOfImage`: `0x12C01000`
