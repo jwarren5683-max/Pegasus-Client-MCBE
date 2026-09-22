@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace utility::integration {
@@ -8,6 +9,7 @@ namespace utility::integration {
 struct PlayerLocation {
     std::uint32_t runtime_id{};
     float x{},y{},z{},distance{};
+    std::string name;
 };
 
 enum class PlayerLocatorStatus { unavailable, no_players, ready };

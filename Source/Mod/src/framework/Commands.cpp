@@ -151,7 +151,7 @@ bool Commands::execute(std::string_view text, ModuleManager& modules, std::vecto
             replies.emplace_back(std::string(chat_style::aqua)+".help"+chat_style::gray+" - Show commands.");
             replies.emplace_back(std::string(chat_style::aqua)+".loki"+chat_style::gray+" - Show Loki version and confirmed features.");
             replies.emplace_back(std::string(chat_style::aqua)+".seed"+chat_style::gray+" - Show the current world/server seed supplied to this client.");
-            replies.emplace_back(std::string(chat_style::aqua)+".locate"+chat_style::gray+" - List visible players and their current coordinates.");
+            replies.emplace_back(std::string(chat_style::aqua)+".locate"+chat_style::gray+" - List other loaded players and their current coordinates.");
             replies.emplace_back(std::string(chat_style::aqua)+".keybind "+chat_style::white+"<module> <key> <toggle|keyhold>"+chat_style::gray+" - Bind a module; quote spaced names.");
             replies.emplace_back(std::string(chat_style::aqua)+".unbind "+chat_style::white+"<module>"+chat_style::gray+" - Remove all key bindings for a module.");
             replies.emplace_back(std::string(chat_style::aqua)+".binds"+chat_style::gray+" - List current Loki key bindings.");
@@ -194,23 +194,23 @@ bool Commands::execute(std::string_view text, ModuleManager& modules, std::vecto
             return true;
         }
         if(result.status==integration::PlayerLocatorStatus::no_players||result.players.empty()) {
-            replies.emplace_back(std::string(chat_style::yellow)+"No other visible players are in this dimension.");
+            replies.emplace_back(std::string(chat_style::yellow)+"No other loaded players are available in this dimension. Players outside client loading range have no safe coordinates to report.");
             return true;
         }
-        replies.emplace_back(std::string(chat_style::aqua)+"Visible players (nearest first):");
+        replies.emplace_back(std::string(chat_style::aqua)+"Loaded players (nearest first):");
         constexpr std::size_t maximum_lines=8;
         const auto count=(std::min)(result.players.size(),maximum_lines);
         for(std::size_t index=0;index<count;++index) {
             const auto& player=result.players[index];
             char line[160]{};
-            std::snprintf(line,sizeof(line),"Player #%u: %.1f %.1f %.1f (%.1fm)",
+            std::snprintf(line,sizeof(line),"%s (#%u): %.1f %.1f %.1f (%.1fm)",player.name.c_str(),
                 player.runtime_id&0x3FFFFU,static_cast<double>(player.x),static_cast<double>(player.y),
                 static_cast<double>(player.z),static_cast<double>(player.distance));
             replies.emplace_back(std::string(chat_style::white)+line);
         }
         if(result.players.size()>maximum_lines)
             replies.emplace_back(std::string(chat_style::gray)+"...and "+
-                std::to_string(result.players.size()-maximum_lines)+" more visible players.");
+                std::to_string(result.players.size()-maximum_lines)+" more loaded players.");
         return true;
     }
     if (name == "binds") {

@@ -503,6 +503,19 @@ bool esp_identifier(std::string_view name) {
         return (c>='a'&&c<='z')||(c>='0'&&c<='9')||c==':'||c=='_'||c=='-'||c=='.'||c=='/';
     });
 }
+bool copy_player_name_12650(void* actor,std::string& output) {
+    // Exact 1.26.5101.0 Player name-tag string, verified in the live Player
+    // object at +0xBC0. Copy it while the actor's registry membership is still
+    // being validated; never retain the engine string or its backing pointer.
+    struct ForeignString { char buffer[16];std::size_t size,capacity; } text{};
+    if(!actor||!camera_read(actor,0xBC0,&text,sizeof(text))||!text.size||text.size>64||
+       text.capacity<text.size||text.capacity>4096)return false;
+    std::string copy(text.size,'\0');
+    if(text.capacity<16)std::memcpy(copy.data(),text.buffer,text.size);
+    else {void* data{};std::memcpy(&data,text.buffer,sizeof(data));if(!data||!camera_read(data,0,copy.data(),text.size))return false;}
+    if(std::any_of(copy.begin(),copy.end(),[](unsigned char c){return c<0x20||c==0x7F;}))return false;
+    output=std::move(copy);return true;
+}
 bool esp_entity(void* actor,void* player,void* actor_dimension,void* dimension,std::string_view name,const Box& box) {
     return actor && actor!=player && dimension && actor_dimension==dimension && esp_identifier(name) &&
         valid(box.lower)&&valid(box.upper)&&box.upper.x>box.lower.x&&
@@ -831,9 +844,16 @@ void capture_esp_12650(bool visuals) {
             const auto movement=minus(positions[0],positions[1]);
             if(valid(movement)&&dot(movement,movement)<16.0F)box.movement=movement;
             if(box.player&&valid(positions[0])) {
+                std::string player_name;
+                if(!copy_player_name_12650(actor,player_name))continue;
+                std::uintptr_t final_owner{};std::uint32_t final_id{};void* final_dimension{};
+                if(!camera_read(actor,0x10,&final_owner,sizeof(final_owner))||
+                   !camera_read(actor,0x18,&final_id,sizeof(final_id))||
+                   !camera_read(actor,0x1C8,&final_dimension,sizeof(final_dimension))||
+                   final_owner!=registry||final_id!=entry.entity||final_dimension!=dimension)continue;
                 const auto delta=minus(positions[0],local_position);
                 locator.players.push_back({entry.entity,positions[0].x,positions[0].y,positions[0].z,
-                    std::sqrt(dot(delta,delta))});
+                    std::sqrt(dot(delta,delta)),std::move(player_name)});
             }
         }
         next.boxes.push_back(box);

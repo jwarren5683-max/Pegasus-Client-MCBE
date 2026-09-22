@@ -71,16 +71,16 @@ int main() {
         commands.set_player_locator([]{
             integration::PlayerLocatorResult result;result.status=integration::PlayerLocatorStatus::no_players;return result;
         });
-        require(execute(".locate")[0].find("No other visible players")!=std::string::npos,"empty locator feedback");
+        require(execute(".locate")[0].find("No other loaded players")!=std::string::npos,"empty locator feedback explains client loading limit");
         commands.set_player_locator([]{
             integration::PlayerLocatorResult result;result.status=integration::PlayerLocatorStatus::ready;
-            result.players={{0x40013,12.26F,64.0F,-3.5F,4.26F},{7,-20.0F,70.0F,8.0F,19.0F}};return result;
+            result.players={{0x40013,12.26F,64.0F,-3.5F,4.26F,"Alex"},{7,-20.0F,70.0F,8.0F,19.0F,"Steve"}};return result;
         });
         const auto located=execute(".locate");
-        require(located.size()==3&&located[0].starts_with("Visible players")&&
-            located[1].find("Player #19: 12.3 64.0 -3.5 (4.3m)")!=std::string::npos&&
-            located[2].find("Player #7: -20.0 70.0 8.0 (19.0m)")!=std::string::npos,
-            "locator coordinate formatting or runtime-id masking");
+        require(located.size()==3&&located[0].starts_with("Loaded players")&&
+            located[1].find("Alex (#19): 12.3 64.0 -3.5 (4.3m)")!=std::string::npos&&
+            located[2].find("Steve (#7): -20.0 70.0 8.0 (19.0m)")!=std::string::npos,
+            "locator player-name, coordinate formatting, or runtime-id masking");
         integration::reset_world_seed();
         std::vector<std::string> clipboard;
         commands.set_clipboard_writer([&](std::string_view text){clipboard.emplace_back(text);return true;});
