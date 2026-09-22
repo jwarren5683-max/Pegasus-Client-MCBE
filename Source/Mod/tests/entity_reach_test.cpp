@@ -34,12 +34,12 @@ int main() {
         "26.50 verified vtable, Survival and final picker sites connected");
     ReachModule entity;
     BlockReachModule block(entity);
-    check(entity.maximum_value() == 10.0F, "entity reach exposes the extended maximum");
-    check(block.maximum_value() == 10.0F, "block reach exposes the extended maximum");
-    entity.set_value(12.0F);
-    block.set_value(12.0F);
-    check(entity.value() == 10.0F, "entity reach clamps to the extended maximum");
-    check(block.value() == 10.0F, "block reach clamps to the extended maximum");
+    check(entity.maximum_value() == 15.0F, "entity reach exposes the 15-block maximum");
+    check(block.maximum_value() == 15.0F, "block reach exposes the 15-block maximum");
+    entity.set_value(18.0F);
+    block.set_value(18.0F);
+    check(entity.value() == 15.0F, "entity reach clamps to the 15-block maximum");
+    check(block.value() == 15.0F, "block reach clamps to the 15-block maximum");
 
     // Extending one reach must not extend the other; reducing block reach must
     // still leave a long enough ray for normal Creative entity selection.
@@ -50,8 +50,9 @@ int main() {
         r=pick_ranges(vanilla,false,7,true,3);
         check(r.ray==vanilla && r.block==3,"short block range preserves vanilla entity query");
         check(final_range(1,r.ray,r.block,false,7)==vanilla,"disabled entity module leaves native range");
-        r=pick_ranges(vanilla,false,7,true,10);
-        check(r.ray==10&&final_range(1,r.ray,r.block,false,7,vanilla)==vanilla,"long block ray does not extend disabled entity reach");
+        r=pick_ranges(vanilla,false,7,true,15);
+        check(r.ray==15&&final_range(0,r.ray,r.block,false,7,vanilla)==15,"15-block block range reaches the final block gate");
+        check(final_range(1,r.ray,r.block,false,7,vanilla)==vanilla,"long block ray does not extend disabled entity reach");
         r=pick_ranges(vanilla,true,3,true,7);
         check(r.ray==7 && final_range(1,r.ray,r.block,true,3)==3,"long blocks do not extend configured entities");
         check(final_range(3,9,r.block,true,3)==9,"unrelated hit types retain native range");
@@ -104,7 +105,7 @@ int main() {
     auto first = reinterpret_cast<bool(*)(float)>(prepare(0));
     auto clamp = reinterpret_cast<float(*)(float)>(prepare(1));
     auto final = reinterpret_cast<bool(*)(float)>(prepare(2));
-    for (float distance : {3.0F, 3.5F, 5.0F, 7.0F, 10.0F, 3.0F}) {
+    for (float distance : {3.0F, 3.5F, 5.0F, 7.0F, 10.0F, 15.0F, 3.0F}) {
         patch.set(distance);
         check(first(distance) && final(distance), "inclusive entity reach boundary");
         check(!first(distance + 0.01F) && !final(distance + 0.01F), "reject beyond configured range");

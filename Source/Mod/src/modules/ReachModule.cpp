@@ -43,7 +43,7 @@ constexpr ReachProfile release_12650{
 constexpr std::size_t max_patch_size = 14;
 constexpr float minimum_distance = 3.0F;
 // Keep the familiar 7-block default, but allow an extended opt-in range.
-constexpr float maximum_distance = 10.0F;
+constexpr float maximum_distance = maximum_reach_distance;
 constexpr float distance_step = 0.5F;
 
 constexpr std::array<std::byte, 16> expected_pick_prologue{

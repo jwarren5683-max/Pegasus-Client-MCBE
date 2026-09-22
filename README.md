@@ -6,7 +6,7 @@ Minecraft `1.26.5101.0` (Bedrock 26.50) is now recognized by an exact executable
 
 ## Notes
 
-- Entity and block reach can be adjusted from 3 to 10 blocks in 0.5-block steps. The default remains 7.
+- Entity and block reach can be adjusted from 3 to 15 blocks in 0.5-block steps. The default remains 7.
 - Extended reach and other gameplay-altering modules are limited to integrated/local worlds. In remote-server sessions they show `N/A` and any previously enabled state is turned off.
 - Trigger Bot no longer calls `GameMode::attack` from inside the player tick. It emits a spaced left-button press only in an integrated/local world while Minecraft is foreground and gameplay input is active.
 - **Auto Leave** appears under Combat. Its slider selects a threshold from 0.5 to 10 hearts in half-heart steps (default 4). Two valid low-health ticks trigger Bedrock's normal asynchronous leave flow once, returning to the world list without closing Minecraft.
