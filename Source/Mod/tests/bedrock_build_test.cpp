@@ -18,9 +18,11 @@ int main() {
           "legacy 1.26.45 profile");
     check(classify_bedrock_build(0x6AA482FD, 0x12C01000) == BedrockBuildKind::release_12650,
           "installed 1.26.50 profile");
+    check(classify_bedrock_build(0x6AB54E37, 0x12C01000) == BedrockBuildKind::release_12652,
+          "installed 1.26.52 profile");
     check(classify_bedrock_build(0x6AA482FD, 0x12888000) == BedrockBuildKind::unsupported,
           "mixed metadata must fail closed");
     check(classify_bedrock_build(0, 0) == BedrockBuildKind::unsupported,
           "unknown metadata must fail closed");
-    std::puts("PASS: Bedrock 1.26.45 and installed 1.26.50 profiles classify exactly");
+    std::puts("PASS: Bedrock 1.26.45, 1.26.50 and installed 1.26.52 profiles classify exactly");
 }

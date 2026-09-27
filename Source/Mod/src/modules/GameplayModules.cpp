@@ -157,7 +157,7 @@ bool current_health(void* player,float& health) {
         if(!integration::readable_game_memory(reinterpret_cast<void*>(at),size))return false;
         std::memcpy(output,reinterpret_cast<void*>(at),size);return true;
     };
-    if(integration::is_release_12650(integration::current_bedrock_build())) {
+    if(integration::is_supported_modern_release(integration::current_bedrock_build())) {
         const auto safe_copy=[](std::uintptr_t at,void* output,std::size_t size) {
             SIZE_T got{};return ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<void*>(at),output,size,&got)&&got==size;
         };
@@ -217,21 +217,29 @@ void refresh_world_seed_12650(void* player) noexcept {
     std::int64_t cached{};
     if(integration::current_world_seed(cached)) return;
     const auto* profile=chest_esp::profile(image);
-    if(profile!=&chest_esp::profile_12650||!chest_esp::profile_verified(image)) return;
+    const auto build=integration::current_bedrock_build();
+    if((profile!=&chest_esp::profile_12650&&profile!=&chest_esp::profile_12652)||
+       !chest_esp::profile_verified(image)) return;
     auto* region=read<void*>(dimension,0xF0);
     auto* table=read<void**>(region);
     if(!region||!table||read<void*>(table,block_source_get_chunk_slot_12650)!=image+profile->get_chunk) return;
     using GetLevel=void*(__fastcall*)(void*);
-    using GetSeed=integration::world_seed_12650::LevelSeed64Abi*(__fastcall*)(
-        void*,integration::world_seed_12650::LevelSeed64Abi*);
-    const auto get_level=read<GetLevel>(table,integration::world_seed_12650::block_source_get_level_slot);
-    const auto get_seed=reinterpret_cast<GetSeed>(image+integration::world_seed_12650::level_get_seed_rva);
-    if(reinterpret_cast<Byte*>(get_level)!=image+integration::world_seed_12650::block_source_get_level_rva||
-       std::memcmp(image+integration::world_seed_12650::block_source_get_level_rva,
+    using SeedAbi=integration::world_seed_12650::LevelSeed64Abi;
+    using GetSeed=SeedAbi*(__fastcall*)(void*,SeedAbi*);
+    const bool release_12652=integration::is_release_12652(build);
+    const auto get_level_slot=integration::world_seed_12650::block_source_get_level_slot;
+    const auto get_level_rva=integration::world_seed_12650::block_source_get_level_rva;
+    const auto get_seed_rva=release_12652?integration::world_seed_12652::level_get_seed_rva:
+        integration::world_seed_12650::level_get_seed_rva;
+    const auto* seed_signature=release_12652?integration::world_seed_12652::level_get_seed_signature.data():
+        integration::world_seed_12650::level_get_seed_signature.data();
+    const auto get_level=read<GetLevel>(table,get_level_slot);
+    const auto get_seed=reinterpret_cast<GetSeed>(image+get_seed_rva);
+    if(reinterpret_cast<Byte*>(get_level)!=image+get_level_rva||
+       std::memcmp(image+get_level_rva,
            integration::world_seed_12650::block_source_get_level_signature.data(),
            integration::world_seed_12650::block_source_get_level_signature.size())||
-       std::memcmp(image+integration::world_seed_12650::level_get_seed_rva,
-           integration::world_seed_12650::level_get_seed_signature.data(),
+       std::memcmp(image+get_seed_rva,seed_signature,
            integration::world_seed_12650::level_get_seed_signature.size())||
        !executable_game_code(reinterpret_cast<void*>(get_level))||
        !executable_game_code(reinterpret_cast<void*>(get_seed))) return;
@@ -242,7 +250,7 @@ void refresh_world_seed_12650(void* player) noexcept {
         auto* level_table=read<void**>(level);
         auto* level_data=read<void*>(level_table,integration::world_seed_12650::level_data_vtable_slot);
         if(!level||!level_table||!executable_game_code(level_data)) return;
-        integration::world_seed_12650::LevelSeed64Abi result{};
+        SeedAbi result{};
         const auto* returned=get_seed(level,&result);
         if(!integration::world_seed_12650::returned_expected_buffer(returned,&result)) return;
         seed=result.value;
@@ -254,7 +262,7 @@ void refresh_world_seed_12650(void* player) noexcept {
     }
 #else
     auto* level=get_level(region);
-    integration::world_seed_12650::LevelSeed64Abi result{};
+    SeedAbi result{};
     if(!integration::world_seed_12650::returned_expected_buffer(get_seed(level,&result),&result))return;
     seed=result.value;
 #endif
@@ -264,7 +272,8 @@ void refresh_world_seed_12650(void* player) noexcept {
         return;
     }
     integration::publish_world_seed(seed);
-    Logger::instance().info("World seed acquired through verified Minecraft 26.50 LevelSeed64 ABI.");
+    Logger::instance().info(release_12652?"World seed acquired through verified Minecraft 26.52 LevelSeed64 ABI.":
+        "World seed acquired through verified Minecraft 26.50 LevelSeed64 ABI.");
 }
 
 // IClientInstance::requestLeaveGameAsync is vtable slot 14 in the supported
@@ -275,13 +284,14 @@ bool request_leave_game_async(void* player) noexcept {
     auto* client=read<void*>(player,0xD70);
     auto* table=read<void**>(client);
     auto request=read<RequestLeave>(table,14*sizeof(void*));
-    if(integration::is_release_12650(integration::current_bedrock_build())) {
+    if(integration::is_supported_modern_release(integration::current_bedrock_build())) {
         // Exact ClientInstance vtable and method; its native diagnostic names
         // requestLeaveGameAsync. No arbitrary executable slot is accepted.
         const unsigned char expected[]{0x55,0x56,0x57,0x48,0x81,0xEC,0x00,0x01,0x00,0x00,0x48,0x8D,0xAC,0x24,0x80,0x00,0x00,0x00};
+        const auto target=integration::is_release_12652(integration::current_bedrock_build())?0x5DA3BD0:0x5DA3B00;
         if(!auto_leave_ready.load()||table!=reinterpret_cast<void**>(image+0xE9731B0)||
-            reinterpret_cast<Byte*>(request)!=image+0x5DA3B00||
-            std::memcmp(image+0x5DA3B00,expected,sizeof(expected)))return false;
+            reinterpret_cast<Byte*>(request)!=image+target||
+            std::memcmp(image+target,expected,sizeof(expected)))return false;
     }
     if(!client||!table||!executable_game_code(read<void*>(table))||
        !executable_game_code(reinterpret_cast<void*>(request)))return false;
@@ -437,10 +447,10 @@ bool camera_read(const void* object,std::size_t offset,void* output,std::size_t 
 struct CameraSample { float view[16]{}; Vec3 origin{}; Frustum frustum{}; void* dimension{}; };
 bool camera_sample(void* player,CameraSample& sample,const integration::BedrockBuildInfo& build=integration::current_bedrock_build()) {
     void* table{};void* client{};void* renderer{};void* renderer_player{};
-    const std::size_t shift=integration::is_release_12650(build)?8:0;
+    const std::size_t shift=integration::is_supported_modern_release(build)?8:0;
     return camera_read(player,0,&table,sizeof(table)) &&
         (table==image+0xE820EC0 ||
-         (integration::is_release_12650(build)&&player==integration::current_player()&&table==image+0xE8E1BC0)) &&
+         (integration::is_supported_modern_release(build)&&player==integration::current_player()&&table==image+0xE8E1BC0)) &&
         camera_read(player,0x1C8,&sample.dimension,sizeof(sample.dimension)) && sample.dimension &&
         camera_read(player,0xD70,&client,sizeof(client)) &&
         camera_read(client,0x418+shift,sample.view,sizeof(sample.view)) &&
@@ -580,11 +590,11 @@ struct GameString { union { char text[16]; const char* pointer; }; std::size_t s
 };
 struct OptionalString { GameString value; bool present{}; Byte padding[7]{}; };
 bool local_chat_supported_build(const integration::BedrockBuildInfo& build) noexcept {
-    return integration::is_release_12645(build) || integration::is_release_12650(build);
+    return integration::is_release_12645(build) || integration::is_supported_modern_release(build);
 }
 bool local_chat(void* player, const char* text) {
     if(!player||!text||!local_chat_supported_build(integration::current_bedrock_build())) return false;
-    if(integration::is_release_12650(integration::current_bedrock_build()))
+    if(integration::is_supported_modern_release(integration::current_bedrock_build()))
         return integration::native_chat::display_12650(player,0xD70,text);
     auto* chat=read<void*>(read<void*>(player,0xD70),0x648);
     if(!chat||!integration::readable_game_memory(chat,sizeof(void*))) return false;
@@ -942,7 +952,7 @@ void auto_bridge_tick(void* player) {
     // controls are already disabled by the game when the local player is not
     // interactive. Keep this candidate fail-closed on pointer/dimension only
     // instead of calling an unverified native address.
-    const bool alive=integration::is_release_12650(integration::current_bedrock_build())
+    const bool alive=integration::is_supported_modern_release(integration::current_bedrock_build())
         ? player&&dimension : player&&dimension&&native<bool(__fastcall*)(void*)>(0x26EFD60)(player);
     const auto input=auto_bridge::Input{
         on(GameplayFeature::auto_bridge),
@@ -1228,28 +1238,37 @@ void initialize() {
     const auto* dos=reinterpret_cast<const IMAGE_DOS_HEADER*>(image);
     if(!image||dos->e_magic!=IMAGE_DOS_SIGNATURE)return;
     const auto* nt=reinterpret_cast<const IMAGE_NT_HEADERS64*>(image+dos->e_lfanew);
-    if(nt->FileHeader.TimeDateStamp==0x6AA482FD&&nt->OptionalHeader.SizeOfImage==0x12C01000){
+    const bool release_12650=nt->FileHeader.TimeDateStamp==0x6AA482FD&&nt->OptionalHeader.SizeOfImage==0x12C01000;
+    const bool release_12652=nt->FileHeader.TimeDateStamp==0x6AB54E37&&nt->OptionalHeader.SizeOfImage==0x12C01000;
+    if(release_12650||release_12652){
         esp_ready=false;
         constexpr Byte prologue[]{0x55,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x56,0x57,0x53,0x48,0x81,0xEC,0xD8,0x02,0,0};
-        original_tick=native<Tick>(0x475EE60);
-        if(std::memcmp(image+0x475EE60,prologue,sizeof(prologue))||
+        const std::uintptr_t tick_rva=release_12652?0x475EF30:0x475EE60;
+        original_tick=native<Tick>(tick_rva);
+        if(std::memcmp(image+tick_rva,prologue,sizeof(prologue))||
            !swap_slot(0xE8E1BC0+0xC0,reinterpret_cast<void*>(original_tick),reinterpret_cast<void*>(&esp_tick_12650))) {
-            Logger::instance().info("ESP unavailable: exact 26.50 local tick slot/prologue mismatch.");return;
+            Logger::instance().info("ESP unavailable: exact modern local tick slot/prologue mismatch.");return;
         }
         auto_bridge_ready=true;
-        Logger::instance().info("Auto Bridge: 26.50 local tick connected; guarded input-assist candidate ready (V+W+Space, look down).");
-        Logger::instance().info("ESP: 26.50 read-only packed snapshots connected to validated native local tick; waiting for local registry and camera validation. No native actor-list calls.");
-        Logger::instance().info("Local chat display: exact 26.50 GuiData acquisition slot, display ABI/RVA, and cleanup verified.");
+        Logger::instance().info(release_12652?"Auto Bridge: 26.52 local tick connected; guarded input-assist candidate ready (V+W+Space, look down).":"Auto Bridge: 26.50 local tick connected; guarded input-assist candidate ready (V+W+Space, look down).");
+        Logger::instance().info(release_12652?"ESP: 26.52 read-only packed snapshots connected to validated native local tick; waiting for local registry and camera validation. No native actor-list calls.":"ESP: 26.50 read-only packed snapshots connected to validated native local tick; waiting for local registry and camera validation. No native actor-list calls.");
+        Logger::instance().info(release_12652?"Local chat display: exact 26.52 GuiData acquisition slot, display ABI/RVA, and cleanup verified.":"Local chat display: exact 26.50 GuiData acquisition slot, display ABI/RVA, and cleanup verified.");
         constexpr Byte leave_prologue[]{0x55,0x56,0x57,0x48,0x81,0xEC,0x00,0x01,0x00,0x00,0x48,0x8D,0xAC,0x24,0x80,0x00,0x00,0x00};
         constexpr Byte component_stride[]{0x4B,0x8D,0x04,0x80,0xC1,0xE0,0x04,0x48,0x01,0xC1};
         constexpr Byte instance_stride[]{0x4D,0x89,0xD0,0x4D,0x29,0xC8,0x4D,0x89,0xC1,0x49,0xC1,0xE1,0x05,0x4F,0x8D,0x04,0x41,0x4C,0x03,0x41,0x18};
-        auto_leave_ready=read<void*>(image,0xE9731B0+14*8)==image+0x5DA3B00&&
-            !std::memcmp(image+0x5DA3B00,leave_prologue,sizeof(leave_prologue))&&
-            !std::memcmp(image+0x2539878,component_stride,sizeof(component_stride))&&
-            !std::memcmp(image+0x31A129D,instance_stride,sizeof(instance_stride));
-        Logger::instance().info(auto_leave_ready.load()?"AutoLeave: exact 26.50 save/disconnect method verified; LocalPlayer tick health monitor connected, waiting for validated health attributes.":"AutoLeave unavailable: exact 26.50 leave-game method mismatch.");
+        const std::uintptr_t leave_rva=release_12652?0x5DA3BD0:0x5DA3B00;
+        const bool attributes_verified=release_12652?
+            (!std::memcmp(image+0x2539618,component_stride,sizeof(component_stride))&&
+             !std::memcmp(image+0x2539738,component_stride,sizeof(component_stride))&&
+             !std::memcmp(image+0x31A112D,instance_stride,sizeof(instance_stride))&&
+             !std::memcmp(image+0x31A124D,instance_stride,sizeof(instance_stride))):
+            (!std::memcmp(image+0x2539878,component_stride,sizeof(component_stride))&&
+             !std::memcmp(image+0x31A129D,instance_stride,sizeof(instance_stride)));
+        auto_leave_ready=read<void*>(image,0xE9731B0+14*8)==image+leave_rva&&
+            !std::memcmp(image+leave_rva,leave_prologue,sizeof(leave_prologue))&&attributes_verified;
+        Logger::instance().info(auto_leave_ready.load()?(release_12652?"AutoLeave: exact 26.52 save/disconnect method and attribute strides verified; LocalPlayer tick health monitor connected.":"AutoLeave: exact 26.50 save/disconnect method verified; LocalPlayer tick health monitor connected, waiting for validated health attributes."):(release_12652?"AutoLeave unavailable: exact 26.52 leave-game or attribute-layout fingerprint mismatch.":"AutoLeave unavailable: exact 26.50 leave-game method mismatch."));
         chest_ready=chest_esp::profile_verified(image);
-        Logger::instance().info(chest_ready.load()?"ChestESP: exact 26.50 block/chunk lookup prologues verified; native local tick and +0x50 storage bounds connected.":"ChestESP unavailable: exact 26.50 native storage profile mismatch.");return;
+        Logger::instance().info(chest_ready.load()?(release_12652?"ChestESP: exact 26.52 block/chunk lookup prologues verified; native local tick and +0x50 storage bounds connected.":"ChestESP: exact 26.50 block/chunk lookup prologues verified; native local tick and +0x50 storage bounds connected."):(release_12652?"ChestESP unavailable: exact 26.52 native storage profile mismatch.":"ChestESP unavailable: exact 26.50 native storage profile mismatch."));return;
     }
     if(nt->FileHeader.TimeDateStamp!=0x6A8378BA||nt->OptionalHeader.SizeOfImage!=0x12888000)return;
     struct Slot { std::uintptr_t rva,target; void* hook; };
@@ -1298,11 +1317,11 @@ ModuleCategory GameplayModule::category() const noexcept {
     default:return ModuleCategory::movement;}
 }
 bool GameplayModule::available() const noexcept {
-    if(feature_==GameplayFeature::auto_leave&&integration::is_release_12650(integration::current_bedrock_build())) {
+    if(feature_==GameplayFeature::auto_leave&&integration::is_supported_modern_release(integration::current_bedrock_build())) {
         float health{};return auto_leave_ready.load()&&current_health(integration::current_player(),health);
     }
     if(feature_==GameplayFeature::auto_bridge) return auto_bridge_ready.load();
-    if(feature_==GameplayFeature::deathposition&&integration::is_release_12650(integration::current_bedrock_build())) {
+    if(feature_==GameplayFeature::deathposition&&integration::is_supported_modern_release(integration::current_bedrock_build())) {
         if(!image) return false;
         void* player=integration::current_player();
         float health{};
@@ -1312,8 +1331,8 @@ bool GameplayModule::available() const noexcept {
             camera_read(player,0x220,&shape,sizeof(shape))&&shape&&
             camera_read(shape,0,&position,sizeof(position))&&valid(position);
     }
-    if(feature_==GameplayFeature::esp||feature_==GameplayFeature::navigation_hud||(feature_==GameplayFeature::chest_esp&&integration::is_release_12650(integration::current_bedrock_build()))) {
-        if(integration::is_release_12650(integration::current_bedrock_build())) {
+    if(feature_==GameplayFeature::esp||feature_==GameplayFeature::navigation_hud||(feature_==GameplayFeature::chest_esp&&integration::is_supported_modern_release(integration::current_bedrock_build()))) {
+        if(integration::is_supported_modern_release(integration::current_bedrock_build())) {
             static std::mutex validation_mutex;std::lock_guard lock(validation_mutex);
             static double previous{};const double now=esp_time();
             if(now-previous>=0.5) {

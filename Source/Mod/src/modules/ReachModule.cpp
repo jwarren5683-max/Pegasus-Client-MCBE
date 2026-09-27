@@ -40,6 +40,9 @@ constexpr ReachProfile release_12645{
 constexpr ReachProfile release_12650{
     0x6AA482FD, 0x12C01000, 0x259FC40, 0x259FCE0,
     {0xE8275B0, 0xE827650}, true, 0xEC3D80, 0x4BD1A3};
+constexpr ReachProfile release_12652{
+    0x6AB54E37, 0x12C01000, 0x259F9E0, 0x259FA80,
+    {0xE8275B0, 0xE827650}, true, 0xEC3D40, 0x4BD1A3};
 constexpr std::size_t max_patch_size = 14;
 constexpr float minimum_distance = 3.0F;
 // Keep the familiar 7-block default, but allow an extended opt-in range.
@@ -301,7 +304,7 @@ void write_absolute_jump(std::byte* destination, const void* target) noexcept {
     }
     const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
     if (nt->Signature != IMAGE_NT_SIGNATURE) return nullptr;
-    for (const auto* profile : {&release_12645, &release_12650}) {
+    for (const auto* profile : {&release_12645, &release_12650, &release_12652}) {
         if (nt->FileHeader.TimeDateStamp == profile->timestamp &&
             nt->OptionalHeader.SizeOfImage == profile->image_size) return profile;
     }
@@ -359,7 +362,9 @@ void ReachModule::set_value(float distance) noexcept {
 void ReachModule::on_register(EventBus&) {
     if (install_hooks()) {
         Logger::instance().info(release_12650_
-            ? "Reach hooks installed for Minecraft 1.26.5101.0; verified ray, Survival cap and final crosshair distance gates connected. Local interaction maximum includes both independent sliders; remote servers may reject extended interactions."
+            ? (integration::is_release_12652(integration::current_bedrock_build())
+                ? "Reach hooks installed for Minecraft 1.26.5203.0; verified ray, Survival cap and final crosshair distance gates connected. Local interaction maximum includes both independent sliders; remote servers may reject extended interactions."
+                : "Reach hooks installed for Minecraft 1.26.5101.0; verified ray, Survival cap and final crosshair distance gates connected. Local interaction maximum includes both independent sliders; remote servers may reject extended interactions.")
             : "Reach hooks installed for Minecraft 1.26.4501.0; block selection, Survival entity selection, and singleplayer validation use the live slider.");
     } else {
         Logger::instance().info(
@@ -456,12 +461,14 @@ bool ReachModule::install_hooks() noexcept {
     auto* base = reinterpret_cast<std::byte*>(image);
     auto* pick_target = base + profile->pick_range_rva;
     auto* max_target = base + profile->max_pick_range_rva;
-    if(profile==&release_12650) {
+    if(profile==&release_12650 || profile==&release_12652) {
         // Exact native crosshair caller: hit in RCX, player in RDX, range in
         // XMM2, adjustment in R9. The shared float constant is never modified.
-        const unsigned char caller[]{0x48,0x89,0xC1,0x4C,0x89,0xFA,0x0F,0x28,0xD6,0x41,0x89,0xD9,0xE8,0xDD,0x6B,0xA0,0x00};
+        const unsigned char caller_12650[]{0x48,0x89,0xC1,0x4C,0x89,0xFA,0x0F,0x28,0xD6,0x41,0x89,0xD9,0xE8,0xDD,0x6B,0xA0,0x00};
+        const unsigned char caller_12652[]{0x48,0x89,0xC1,0x4C,0x89,0xFA,0x0F,0x28,0xD6,0x41,0x89,0xD9,0xE8,0x9D,0x6B,0xA0,0x00};
         const unsigned char picker_entry[]{0x55,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x56,0x57,0x53,0x48,0x81,0xEC,0x58,0x06,0x00,0x00};
-        if(std::memcmp(base+0x4BD192,caller,sizeof(caller))||std::memcmp(base+0x4BA840,picker_entry,sizeof(picker_entry)))return false;
+        const auto* caller=profile==&release_12652?caller_12652:caller_12650;
+        if(std::memcmp(base+0x4BD192,caller,sizeof(caller_12650))||std::memcmp(base+0x4BA840,picker_entry,sizeof(picker_entry)))return false;
         for(const auto& site:entity_range_reads_12650)if(std::memcmp(base+site.rva,site.bytes.data(),site.size))return false;
     }
     picker_return_rva_=profile->picker_return_rva;
@@ -504,7 +511,7 @@ bool ReachModule::install_hooks() noexcept {
     original_pick_range_ = reinterpret_cast<PickRangeFunction>(pick_target);
     original_max_pick_range_ = reinterpret_cast<MaxPickRangeFunction>(trampoline);
     // Publish the ownership policy before any callback becomes callable.
-    release_12650_ = profile == &release_12650;
+    release_12650_ = profile == &release_12650 || profile == &release_12652;
     active_module.store(this, std::memory_order_release);
 
     if (!exchange_slot(pick_slots_[0], reinterpret_cast<void*>(&pick_range_hook)) ||
@@ -543,7 +550,7 @@ bool ReachModule::install_hooks() noexcept {
     max_target_ = max_target;
     max_trampoline_ = trampoline;
     full_entity_support_ = profile->full_entity_support;
-    release_12650_ = profile == &release_12650;
+    release_12650_ = profile == &release_12650 || profile == &release_12652;
     hooks_installed_ = true;
     if (full_entity_support_ && !entity_range_storage().install(base,release_12650_)) {
         uninstall_hooks();

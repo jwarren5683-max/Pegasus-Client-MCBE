@@ -31,11 +31,13 @@ struct Storage { Position position; float bounds[6]{}; Kind kind{Kind::count}; }
 struct Profile { std::uintptr_t get_block,get_chunk,chunk_source;std::size_t bounds; };
 inline constexpr Profile profile_12645{0x2486DC0,0x24860E0,0x598CE20,0x48};
 inline constexpr Profile profile_12650{0x2D80170,0x2D7F490,0x32F3600,0x50};
+inline constexpr Profile profile_12652{0x2D80120,0x2D7F440,0x32F36D0,0x50};
 inline const Profile* profile(unsigned char* image) {
     const auto build=integration::current_bedrock_build();
     if(reinterpret_cast<HMODULE>(image)!=build.image)return nullptr;
     if(integration::is_release_12645(build))return &profile_12645;
     if(integration::is_release_12650(build))return &profile_12650;
+    if(integration::is_release_12652(build))return &profile_12652;
     return nullptr;
 }
 inline bool profile_verified(unsigned char* image) {

@@ -32,6 +32,11 @@ int main() {
         release_12650.pick_slot_rvas[1] == 0xE827650 && release_12650.full_entity_support &&
         release_12650.final_range_rva==0xEC3D80&&release_12650.picker_return_rva==0x4BD1A3,
         "26.50 verified vtable, Survival and final picker sites connected");
+    check(release_12652.timestamp==0x6AB54E37&&release_12652.image_size==0x12C01000&&
+        release_12652.pick_range_rva==0x259F9E0&&release_12652.max_pick_range_rva==0x259FA80&&
+        release_12652.pick_slot_rvas[0]==0xE8275B0&&release_12652.pick_slot_rvas[1]==0xE827650&&
+        release_12652.final_range_rva==0xEC3D40&&release_12652.picker_return_rva==0x4BD1A3,
+        "26.52 verified Reach profile changed");
     ReachModule entity;
     BlockReachModule block(entity);
     check(entity.maximum_value() == 15.0F, "entity reach exposes the 15-block maximum");

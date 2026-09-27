@@ -45,10 +45,10 @@ int main(){
     const auto get_chunk=[&](void*,const void*)->void*{++chunks;return chunk.data();};
     const auto get_block=[&](void*,const Position* p)->void*{++blocks;check(p->x==-1&&p->y==-60&&p->z==-17,"correct block query coordinates");return block.data();};
     const float bounds[]{-1,-60,-17,0,-59,-16};
-    for(const auto& layout:{profile_12645,profile_12650}){
+    for(const auto& layout:{profile_12645,profile_12650,profile_12652}){
         actor.fill(0);put(actor,8,position);std::memcpy(actor.data()+layout.bounds,bounds,sizeof(bounds));
         check(capture_loaded(player.data(),&dimension,region.data(),source.data(),layout,result,get_chunk,get_block)&&
-            result.size()==1&&result[0].kind==Kind::chest,"both native bounds profiles publish the placed chest");
+            result.size()==1&&result[0].kind==Kind::chest,"all native bounds profiles publish the placed chest");
     }
     const auto before=blocks;put(actor_node,0x10,std::uint32_t{0});
     check(capture_loaded(player.data(),&dimension,region.data(),source.data(),profile_12650,result,get_chunk,get_block)&&

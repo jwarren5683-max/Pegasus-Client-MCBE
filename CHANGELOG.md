@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-27 — Minecraft Bedrock 26.52 compatibility
+
+- Added an exact executable profile for Minecraft `1.26.5203.0` (Bedrock
+  26.52) instead of treating the update as an unsupported build.
+- Ported and byte-gated the current native targets for Reach, Block Reach,
+  X-ray, Fullbright, ESP, ChestESP, Auto Leave, Auto Bridge, local chat
+  commands, and world-seed access. Unverified modules continue to fail closed
+  and display `N/A`.
+- Preserved the existing 26.45 and 26.50 profiles and all local/remote-session
+  safety restrictions.
+- Expanded exact-profile regression coverage to 26 tests. A clean Release
+  build, injector self-test, and live title-screen injection all passed; the
+  exact 26.52 hooks initialized and Minecraft remained responsive. Visible
+  behavior in a local world still needs a fresh-session play test.
+
 ## 2026-09-17 — Auto Bridge test candidate
 
 - Added a separate Auto Bridge gameplay module for the current Bedrock profile.

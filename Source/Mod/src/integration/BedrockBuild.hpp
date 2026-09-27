@@ -11,6 +11,7 @@ enum class BedrockBuildKind {
     unsupported,
     release_12645,
     release_12650,
+    release_12652,
 };
 
 struct BedrockBuildInfo final {
@@ -24,6 +25,8 @@ inline constexpr std::uint32_t release_12645_timestamp = 0x6A8378BA;
 inline constexpr std::uint32_t release_12645_image_size = 0x12888000;
 inline constexpr std::uint32_t release_12650_timestamp = 0x6AA482FD;
 inline constexpr std::uint32_t release_12650_image_size = 0x12C01000;
+inline constexpr std::uint32_t release_12652_timestamp = 0x6AB54E37;
+inline constexpr std::uint32_t release_12652_image_size = 0x12C01000;
 
 [[nodiscard]] constexpr BedrockBuildKind classify_bedrock_build(std::uint32_t timestamp,
                                                                  std::uint32_t image_size) noexcept {
@@ -31,6 +34,8 @@ inline constexpr std::uint32_t release_12650_image_size = 0x12C01000;
         return BedrockBuildKind::release_12645;
     if (timestamp == release_12650_timestamp && image_size == release_12650_image_size)
         return BedrockBuildKind::release_12650;
+    if (timestamp == release_12652_timestamp && image_size == release_12652_image_size)
+        return BedrockBuildKind::release_12652;
     return BedrockBuildKind::unsupported;
 }
 
@@ -65,6 +70,14 @@ inline constexpr std::uint32_t release_12650_image_size = 0x12C01000;
 
 [[nodiscard]] inline bool is_release_12650(const BedrockBuildInfo& build) noexcept {
     return build.kind == BedrockBuildKind::release_12650;
+}
+
+[[nodiscard]] inline bool is_release_12652(const BedrockBuildInfo& build) noexcept {
+    return build.kind == BedrockBuildKind::release_12652;
+}
+
+[[nodiscard]] inline bool is_supported_modern_release(const BedrockBuildInfo& build) noexcept {
+    return is_release_12650(build) || is_release_12652(build);
 }
 
 } // namespace utility::integration

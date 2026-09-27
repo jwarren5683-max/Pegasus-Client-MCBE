@@ -42,5 +42,16 @@ int main() {
         "changed native-send branch accepted");
     require(sizeof(native_chat::NativeString)==32 && sizeof(native_chat::OptionalString)==40 &&
         sizeof(native_chat::GuiDataHandle)==24,"release chat ABI layout changed");
-    std::cout << "26.50 chat profile, fingerprints, and ABI layouts passed.\n";
+    const auto* newest=chat_compat::select(0x6AB54E37,0x12C01000);
+    require(newest==&chat_compat::release_12652,"26.52 PE identity must select the chat profile");
+    require(newest->submit_rva==0x4DE1980&&newest->display_rva==0x155EEA0&&
+        newest->field_signature_rva==0x4DE19AD&&newest->send_signature_rva==0x4DE1CF2,
+        "26.52 verified RVAs changed");
+    require(chat_compat::controller_signature_rva(newest)==0x4DE1D01&&
+        chat_compat::uses_modern_display(newest),"26.52 controller/display routing changed");
+    require(chat_compat::matches_fragments(newest->submit_signature.data(),newest->field_signature.data(),
+        newest->send_signature.data(),*newest),"exact 26.52 compound fingerprint rejected");
+    require(chat_compat::select(0x6AB54E36,0x12C01000)==nullptr,
+        "nearby 26.52 timestamp must fail closed");
+    std::cout << "26.50/26.52 chat profiles, fingerprints, and ABI layouts passed.\n";
 }

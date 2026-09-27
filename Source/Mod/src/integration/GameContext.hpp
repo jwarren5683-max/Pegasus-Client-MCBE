@@ -52,7 +52,7 @@ inline void observe_game_mode(void* game_mode) noexcept {
     const auto base = reinterpret_cast<std::uintptr_t>(image);
     if (is_release_12645(build)) {
         if (table != base + 0xE820EC0 && table != base + 0xE833530) return;
-    } else if (is_release_12650(build)) {
+    } else if (is_supported_modern_release(build)) {
         // This candidate comes from the exact, byte-verified GameMode range
         // function. Validate the object structurally instead of carrying the
         // old LocalPlayer vtable address across versions.

@@ -164,7 +164,7 @@ bool Commands::execute(std::string_view text, ModuleManager& modules, std::vecto
     }
     if (name == "loki") {
         if (args.size()!=1) { replies.emplace_back("Usage: .loki (no arguments)."); return true; }
-        replies.emplace_back(std::string(chat_style::green)+"Loki"+chat_style::gray+" | Minecraft 26.50");
+        replies.emplace_back(std::string(chat_style::green)+"Loki"+chat_style::gray+" | Minecraft 26.52");
         replies.emplace_back(std::string(chat_style::gray)+"Confirmed: "+chat_style::aqua+
             "Reach, Block Reach, X-Ray, Fullbright, ESP, ChestESP, Auto Leave, Auto Bridge");
         return true;

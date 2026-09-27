@@ -35,7 +35,7 @@ template<class T> T read(const void* object, std::size_t offset=0) {
 void reply(void* controller, const std::string& text) {
     auto* model=read<void*>(controller,0xD48);
     const std::string prefixed=chat_style::line(text);
-    if (active_profile == &chat_compat::release_12650) {
+    if (chat_compat::uses_modern_display(active_profile)) {
         auto* validity=read<void*>(model,0x48);
         if (!validity || !read<bool>(validity)) return;
         native_chat::display_12650(model,0x58,prefixed.c_str());
@@ -161,10 +161,10 @@ bool install_chat_commands(ModuleManager& modules) noexcept {
     if (nt.Signature!=IMAGE_NT_SIGNATURE) return false;
     const auto* profile=chat_compat::select(nt.FileHeader.TimeDateStamp,nt.OptionalHeader.SizeOfImage);
     if (!profile || !chat_compat::matches(image,*profile)) return false;
-    if (profile==&chat_compat::release_12650 &&
+    if (chat_compat::uses_modern_display(profile) &&
         (std::memcmp(image+profile->display_rva,chat_compat::display_12650_signature.data(),
             chat_compat::display_12650_signature.size()) ||
-         std::memcmp(image+chat_compat::controller_12650_signature_rva,
+         std::memcmp(image+chat_compat::controller_signature_rva(profile),
             chat_compat::controller_12650_signature.data(),chat_compat::controller_12650_signature.size()))) return false;
     auto* target=image+profile->submit_rva;
     const auto signature_size=profile->submit_signature.size();

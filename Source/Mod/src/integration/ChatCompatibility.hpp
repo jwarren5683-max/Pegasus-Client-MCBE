@@ -38,11 +38,22 @@ inline constexpr Profile release_12650{
     {0xE8,0x99,0xBB,0xAA,0xFC,0xEB,0x08,0x48,0x89,0xFA,0xE8,0x7F,0xB5}
 };
 
+// Extracted from the mapped Microsoft.MinecraftUWP 1.26.5203.0 image. The
+// controller layout and display ABI are unchanged; all moved targets and
+// relative-call bytes are fingerprinted independently for this PE identity.
+inline constexpr Profile release_12652{
+    0x6AB54E37, 0x12C01000, 0x4DE1980, 0x155EEA0, 0x4DE19AD, 0x4DE1CF2,
+    {0x55,0x41,0x57,0x41,0x56,0x56,0x57,0x53,0x48,0x81,0xEC,0xD8,0,0,0},
+    {0x48,0x8D,0xB9,0x60,0x0D,0,0},
+    {0xE8,0xD9,0xB7,0xAA,0xFC,0xEB,0x08,0x48,0x89,0xFA,0xE8,0xBF,0xB1}
+};
+
 inline constexpr std::array<Byte, 32> display_12650_signature{
     0x55,0x56,0x53,0x48,0x81,0xEC,0x90,0x02,0,0,0x48,0x8D,0xAC,0x24,0x80,0,0,0,
     0x48,0xC7,0x85,0x08,0x02,0,0,0xFE,0xFF,0xFF,0xFF,0x44,0x88,0xCB
 };
 inline constexpr std::uintptr_t controller_12650_signature_rva = 0x4DE1C31;
+inline constexpr std::uintptr_t controller_12652_signature_rva = 0x4DE1D01;
 inline constexpr std::array<Byte, 11> controller_12650_signature{
     0x48,0x8B,0x9E,0x48,0x0D,0,0,0x48,0x8B,0x43,0x48
 };
@@ -50,7 +61,16 @@ inline constexpr std::array<Byte, 11> controller_12650_signature{
 [[nodiscard]] inline const Profile* select(std::uint32_t timestamp, std::uint32_t image_size) noexcept {
     if (timestamp == release_12645.timestamp && image_size == release_12645.image_size) return &release_12645;
     if (timestamp == release_12650.timestamp && image_size == release_12650.image_size) return &release_12650;
+    if (timestamp == release_12652.timestamp && image_size == release_12652.image_size) return &release_12652;
     return nullptr;
+}
+
+[[nodiscard]] inline bool uses_modern_display(const Profile* profile) noexcept {
+    return profile == &release_12650 || profile == &release_12652;
+}
+
+[[nodiscard]] inline std::uintptr_t controller_signature_rva(const Profile* profile) noexcept {
+    return profile == &release_12652 ? controller_12652_signature_rva : controller_12650_signature_rva;
 }
 
 [[nodiscard]] inline bool matches_fragments(const Byte* submit, const Byte* field, const Byte* send,

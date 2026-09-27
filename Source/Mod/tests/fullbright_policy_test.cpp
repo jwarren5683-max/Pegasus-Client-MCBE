@@ -18,10 +18,10 @@ int main(){
     auto& s=state();
     s.base=reinterpret_cast<uintptr_t>(VirtualAlloc(nullptr,0x6A00000,MEM_RESERVE,PAGE_NOACCESS));
     check(s.base!=0,"reserve synthetic image");
-    for(bool native: {false,true}) {
-    s.native_12650=native;s.native_lighting_verified=native;
-    const auto& textures=native?texture_patches_12650:texture_patches;
-    const auto& mesh=native?light_patches_12650:light_patches;
+    for(int native: {0,1,2}) {
+    s.native_12650=native!=0;s.native_12652=native==2;s.native_lighting_verified=native!=0;
+    const auto& textures=native==2?texture_patches_12652:(native==1?texture_patches_12650:texture_patches);
+    const auto& mesh=native==2?light_patches_12652:(native==1?light_patches_12650:light_patches);
     const auto all=lighting_patches(true,15);
     for(const auto& p:all){
         const auto page=(s.base+p.rva)&~uintptr_t(4095);
@@ -55,7 +55,7 @@ int main(){
     check(!module.available(),"unverified native lighting stays unavailable");
     s.native_lighting_verified=true;
     check(module.available(),"verified native lighting becomes available");
-    s.native_12650=false;s.native_lighting_verified=false;s.installed=false;
+    s.native_12650=false;s.native_12652=false;s.native_lighting_verified=false;s.installed=false;
     VirtualFree(reinterpret_cast<void*>(s.base),0,MEM_RELEASE);s.base=0;
     std::puts("Fullbright slider, mesh lighting, lookup and restoration passed");
 }
