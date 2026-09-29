@@ -10,11 +10,14 @@ void require(bool condition,const char* message) {
     if(!condition){std::cerr<<"FAIL: "<<message<<'\n';std::exit(1);}
 }
 Input safe(bool hook=false,std::uint64_t id=0,float y=0.0F) {
-    return {true,true,true,true,true,hook,id,y};
+    return {true,true,true,true,true,true,hook,id,y};
 }
 }
 
 int main() {
+    require(!click_release_due(100,144),"right-click remains held through the next frame");
+    require(click_release_due(100,145),"right-click releases after the minimum hold");
+    require(click_release_due(100,99),"clock rollback releases a held button");
     Controller controller;
     require(controller.update(100,safe()).cast,"enable performs one initial cast");
     require(!controller.update(200,safe()).cast,"missing hook does not spam casts");
@@ -35,6 +38,8 @@ int main() {
     require(!controller.update(100,input).cast,"remote sessions never cast");
     input=safe();input.foreground=false;
     require(!controller.update(200,input).cast,"background game never casts");
+    input=safe();input.rod_selected=false;
+    require(!controller.update(250,input).cast,"non-rod held item never casts");
     input=safe();input.sample_valid=false;
     require(!controller.update(300,input).cast,"invalid actor snapshot fails closed");
 

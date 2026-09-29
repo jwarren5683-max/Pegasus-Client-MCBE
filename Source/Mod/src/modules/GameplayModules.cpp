@@ -16,6 +16,7 @@
 #include "../integration/NavigationBridge.hpp"
 #include "../integration/ServerSafety.hpp"
 #include "../integration/NavigationNativeLayout.hpp"
+#include "../integration/NavigationInventoryAccess.hpp"
 #include "../integration/BedrockBuild.hpp"
 #include "../framework/Logger.hpp"
 #include "../framework/ChatStyle.hpp"
@@ -144,6 +145,7 @@ template<class T> T read(const void* object, std::size_t offset = 0) {
     return result;
 }
 void release_trigger_mouse();
+void release_fishing_mouse();
 void auto_bridge_tick(void* player);
 void auto_fishing_tick(void* player);
 
@@ -315,7 +317,7 @@ void auto_leave_tick(void* player,bool new_player) {
     float health{};
     const bool valid=current_health(player,health);
     if(!auto_leave_gate.update(health,auto_leave_hearts.load(),on(GameplayFeature::auto_leave)&&valid))return;
-    release_trigger_mouse();pending_keys=0;airjump_requests.reset();
+    release_trigger_mouse();release_fishing_mouse();pending_keys=0;airjump_requests.reset();
     char message[160]{};
     std::snprintf(message,sizeof(message),"Auto Leave requested at %.1f hearts (threshold %.1f).",
         static_cast<double>(health/2.0F),static_cast<double>(auto_leave_hearts.load()));
@@ -939,14 +941,21 @@ bool emit_bridge_place() {
     return true;
 }
 
-bool emit_fishing_action(const char* action) {
+bool fishing_button_down{};
+ULONGLONG fishing_button_time{};
+bool start_fishing_action(const char* action) {
+    if(fishing_button_down)return false;
     if(!controls_active()||integration::server_safety::remote_session())return false;
     if(!send_trigger_mouse(MOUSEEVENTF_RIGHTDOWN))return false;
-    bool released=send_trigger_mouse(MOUSEEVENTF_RIGHTUP);
-    if(!released)released=send_trigger_mouse(MOUSEEVENTF_RIGHTUP);
-    if(!released)return false;
+    fishing_button_down=true;fishing_button_time=GetTickCount64();
     char message[96]{};std::snprintf(message,sizeof(message),"Auto Fishing dispatched guarded %s input.",action);
     Logger::instance().info(message);return true;
+}
+void release_fishing_mouse() {
+    if(!fishing_button_down)return;
+    bool released=send_trigger_mouse(MOUSEEVENTF_RIGHTUP);
+    if(!released)released=send_trigger_mouse(MOUSEEVENTF_RIGHTUP);
+    if(released){fishing_button_down=false;fishing_button_time=0;}
 }
 void auto_bridge_tick(void* player) {
     static auto_bridge::Cadence cadence;
@@ -1016,20 +1025,57 @@ FishingHookSample fishing_hook_sample(void* player) {
     }
     return result;
 }
+enum class RodSelection { unreadable, other, fishing_rod };
+RodSelection selected_fishing_rod(void* player) noexcept {
+    if(!player||!image)return RodSelection::unreadable;
+    __try {
+        std::uintptr_t supplies{},inventory{},table{},getter{};unsigned selected{};
+        if(!camera_read(player,0x5B8,&supplies,sizeof(supplies))||!supplies||
+           !camera_read(reinterpret_cast<void*>(supplies),0x10,&selected,sizeof(selected))||selected>8||
+           !camera_read(reinterpret_cast<void*>(supplies),0xB8,&inventory,sizeof(inventory))||!inventory||
+           !camera_read(reinterpret_cast<void*>(inventory),0,&table,sizeof(table))||!table||
+           !camera_read(reinterpret_cast<void*>(table),0x38,&getter,sizeof(getter)))return RodSelection::unreadable;
+        const auto build=integration::current_bedrock_build();
+        const auto base=reinterpret_cast<std::uintptr_t>(image);
+        if(getter<base||getter>=base+build.image_size)return RodSelection::unreadable;
+        const auto stack=reinterpret_cast<std::uintptr_t(__fastcall*)(std::uintptr_t,int)>(getter)(inventory,static_cast<int>(selected));
+        integration::navigation_native::NativeStack held;
+        if(!stack||!integration::navigation_native::capture_stack(stack,held)||!held.valid)return RodSelection::unreadable;
+        return held.count>0&&std::string_view(held.identifier)=="minecraft:fishing_rod"
+            ?RodSelection::fishing_rod:RodSelection::other;
+    }__except(EXCEPTION_EXECUTE_HANDLER){return RodSelection::unreadable;}
+}
 void auto_fishing_tick(void* player) {
-    static auto_fishing::Controller controller;static unsigned revision{};
+    static auto_fishing::Controller controller;static unsigned revision{};static RodSelection previous_selection=RodSelection::unreadable;
     const auto current_revision=auto_fishing_revision.load();
-    if(revision!=current_revision){controller.reset();revision=current_revision;}
+    if(revision!=current_revision){controller.reset();revision=current_revision;previous_selection=RodSelection::unreadable;}
+    const auto now=GetTickCount64();
     void* dimension{};camera_read(player,0x1C8,&dimension,sizeof(dimension));
     const bool enabled=on(GameplayFeature::auto_fishing);
     const bool foreground=controls_active();
+    const bool local=!integration::server_safety::remote_session();
+    if(fishing_button_down) {
+        if(!enabled||!foreground||!local||
+           auto_fishing::click_release_due(fishing_button_time,now))release_fishing_mouse();
+        return;
+    }
+    const auto selection=enabled&&foreground&&local&&dimension?selected_fishing_rod(player):RodSelection::unreadable;
+    if(enabled&&foreground&&local&&dimension&&selection!=previous_selection) {
+        Logger::instance().info(selection==RodSelection::fishing_rod
+            ?"Auto Fishing selected fishing rod verified; automatic cycle armed."
+            :selection==RodSelection::other
+                ?"Auto Fishing waiting: select a fishing rod in the hotbar."
+                :"Auto Fishing waiting: selected hotbar item could not be validated.");
+    }
+    previous_selection=selection;
+    const bool rod=selection==RodSelection::fishing_rod;
     FishingHookSample hook{};
-    if(enabled&&foreground&&dimension&&!integration::server_safety::remote_session())hook=fishing_hook_sample(player);
-    const auto decision=controller.update(GetTickCount64(),{
-        enabled,!integration::server_safety::remote_session(),foreground,player&&dimension,
+    if(rod)hook=fishing_hook_sample(player);
+    const auto decision=controller.update(now,{
+        enabled,local,foreground,player&&dimension,rod,
         hook.valid,hook.present,hook.id,hook.y});
-    if(decision.reel)emit_fishing_action("reel");
-    else if(decision.cast)emit_fishing_action("cast");
+    if(decision.reel)start_fishing_action("reel");
+    else if(decision.cast)start_fishing_action("cast");
 }
 void release_trigger_mouse() {
     if(!trigger_button_down)return;
@@ -1427,7 +1473,7 @@ bool GameplayModule::available() const noexcept {
 bool GameplayModule::allowed_on_remote_server() const noexcept { return feature_==GameplayFeature::auto_leave||feature_==GameplayFeature::esp||feature_==GameplayFeature::chest_esp||feature_==GameplayFeature::navigation_hud; }
 void GameplayModule::on_register(EventBus&) { initialize(); }
 void GameplayModule::on_enable() { if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;Logger::instance().info("Trigger Bot enabled for local-world input delivery.");} if(feature_==GameplayFeature::auto_leave){++auto_leave_revision;Logger::instance().info("Auto Leave enabled.");} if(feature_==GameplayFeature::auto_bridge)Logger::instance().info("Auto Bridge enabled: keyboard V+W+Space or controller LB/RB/RT + left-stick-forward + A; look down."); if(feature_==GameplayFeature::auto_fishing){++auto_fishing_revision;Logger::instance().info("Auto Fishing enabled: hold a fishing rod and face open water; one guarded cast will start the cycle.");} flags[static_cast<unsigned>(feature_)]=true; }
-void GameplayModule::on_disable() { flags[static_cast<unsigned>(feature_)]=false; if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;release_trigger_mouse();Logger::instance().info("Trigger Bot disabled.");} if(feature_==GameplayFeature::auto_leave)++auto_leave_revision; if(feature_==GameplayFeature::auto_bridge)Logger::instance().info("Auto Bridge disabled."); if(feature_==GameplayFeature::auto_fishing){++auto_fishing_revision;Logger::instance().info("Auto Fishing disabled.");} }
+void GameplayModule::on_disable() { flags[static_cast<unsigned>(feature_)]=false; if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;release_trigger_mouse();Logger::instance().info("Trigger Bot disabled.");} if(feature_==GameplayFeature::auto_leave)++auto_leave_revision; if(feature_==GameplayFeature::auto_bridge)Logger::instance().info("Auto Bridge disabled."); if(feature_==GameplayFeature::auto_fishing){++auto_fishing_revision;release_fishing_mouse();Logger::instance().info("Auto Fishing disabled.");} }
 bool GameplayModule::has_value() const noexcept { return feature_==GameplayFeature::jetpack||feature_==GameplayFeature::auto_leave||feature_==GameplayFeature::navigation_hud; }
 std::string_view GameplayModule::value_label() const noexcept { return feature_==GameplayFeature::auto_leave?"Leave at":feature_==GameplayFeature::navigation_hud?"Range":"Speed"; }
 std::string_view GameplayModule::value_suffix() const noexcept { return feature_==GameplayFeature::auto_leave?" hearts":feature_==GameplayFeature::navigation_hud?" blocks":" blocks/s"; }

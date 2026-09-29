@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-29 — Auto Fishing input repair
+
+- Diagnosed the first in-world failure from the runtime log: cast and reel
+  right-clicks were released in the same tick, allowing Minecraft to miss the
+  input and leave the hook active.
+- Hold each guarded right-click across game ticks before releasing it, and
+  release immediately when the module is disabled or Auto Leave fires.
+- Verify the selected hotbar item is `minecraft:fishing_rod` before casting,
+  watching a hook, reeling, or recasting.
+
 ## 2026-09-29 — Auto Fishing
 
 - Added **Auto Fishing** to the Player menu for the exact 26.50/26.52 local

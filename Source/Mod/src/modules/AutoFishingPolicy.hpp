@@ -9,13 +9,20 @@ inline constexpr std::uint64_t minimum_hook_age_ms = 1200;
 inline constexpr std::uint64_t maximum_sample_gap_ms = 250;
 inline constexpr std::uint64_t recast_delay_ms = 350;
 inline constexpr std::uint64_t cast_timeout_ms = 3500;
+inline constexpr std::uint64_t click_hold_ms = 45;
 inline constexpr float bite_drop_blocks = 0.08F;
+
+[[nodiscard]] constexpr bool click_release_due(std::uint64_t started,
+                                                std::uint64_t now) noexcept {
+    return now < started || now - started >= click_hold_ms;
+}
 
 struct Input {
     bool enabled{};
     bool local_world{};
     bool foreground{};
     bool alive{};
+    bool rod_selected{};
     bool sample_valid{};
     bool hook_present{};
     std::uint64_t hook_id{};
@@ -34,7 +41,8 @@ struct Decision {
 class Controller final {
 public:
     Decision update(std::uint64_t now, const Input& input) noexcept {
-        if (!input.enabled || !input.local_world || !input.foreground || !input.alive) {
+        if (!input.enabled || !input.local_world || !input.foreground || !input.alive ||
+            !input.rod_selected) {
             reset();
             return {};
         }
