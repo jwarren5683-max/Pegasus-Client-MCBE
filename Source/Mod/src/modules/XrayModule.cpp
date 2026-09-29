@@ -52,6 +52,18 @@ constexpr auto texture_patches_12650=[] {
     p[3].rva=0x6619B63;p[4].rva=0x6619BAD;p[5].rva=0x692D2F0;
     return p;
 }();
+constexpr auto light_patches_12652=[] {
+    auto p=light_patches;
+    p[0].rva=0x6024804;p[1].rva=0x6024AFB;
+    p[2].rva=0x602879A;p[3].rva=0x6028872;
+    return p;
+}();
+constexpr auto texture_patches_12652=[] {
+    auto p=texture_patches;
+    p[0].rva=0x6619F59;p[1].rva=0x6618860;p[2].rva=0x66188B0;
+    p[3].rva=0x6619C33;p[4].rva=0x6619C7D;p[5].rva=0x692D3C0;
+    return p;
+}();
 struct Graphics { uintptr_t object; uintptr_t block; uintptr_t type; int shape; float ao; bool retained; };
 using Tick = void(__fastcall*)(void*);
 struct State {
@@ -69,6 +81,7 @@ struct State {
     uintptr_t graphics_vtable{};
     bool adaptive_12650{};
     bool native_12650{};
+    bool native_12652{};
     bool native_lighting_verified{};
     uintptr_t coordinator_table{};
     uintptr_t rebuild_target{};
@@ -149,26 +162,28 @@ bool write_code(uintptr_t p,const void* bytes,size_t n) noexcept {
 void jump(unsigned char* p,uintptr_t target) { p[0]=0xFF;p[1]=0x25;std::memset(p+2,0,4);std::memcpy(p+6,&target,8); }
 bool validate_native_lighting() {
     const auto base=state().base;
-    for(const auto& p:light_patches_12650)
+    const auto& mesh=state().native_12652?light_patches_12652:light_patches_12650;
+    const auto& textures=state().native_12652?texture_patches_12652:texture_patches_12650;
+    for(const auto& p:mesh)
         if(!readable(base+p.rva,p.size)||std::memcmp(reinterpret_cast<void*>(base+p.rva),p.before.data(),p.size))return false;
-    for(const auto& p:texture_patches_12650)
+    for(const auto& p:textures)
         if(!readable(base+p.rva,p.size)||std::memcmp(reinterpret_cast<void*>(base+p.rva),p.before.data(),p.size))return false;
     // Validate all five containing functions, not only short patch patterns.
     struct Entry {uintptr_t rva;size_t size;const char* bytes;};
     const Entry entries[]{
-        {0x6024600,19,"\x41\x57\x41\x56\x41\x55\x41\x54\x56\x57\x55\x53\x48\x81\xEC\xA8\x00\x00\x00"},
-        {0x6028600,19,"\x41\x57\x41\x56\x41\x55\x41\x54\x56\x57\x55\x53\x48\x81\xEC\x18\x01\x00\x00"},
-        {0x66184D0,19,"\x41\x57\x41\x56\x41\x55\x41\x54\x56\x57\x55\x53\x48\x81\xEC\xF8\x01\x00\x00"},
-        {0x6619C50,15,"\x41\x57\x41\x56\x56\x57\x55\x53\x48\x81\xEC\xD8\x00\x00\x00"},
-        {0x692D0D0,17,"\x41\x57\x41\x56\x41\x54\x56\x57\x55\x53\x48\x81\xEC\xD0\x00\x00\x00"}
+        {state().native_12652?std::uintptr_t{0x60246D0}:std::uintptr_t{0x6024600},19,"\x41\x57\x41\x56\x41\x55\x41\x54\x56\x57\x55\x53\x48\x81\xEC\xA8\x00\x00\x00"},
+        {state().native_12652?std::uintptr_t{0x60286D0}:std::uintptr_t{0x6028600},19,"\x41\x57\x41\x56\x41\x55\x41\x54\x56\x57\x55\x53\x48\x81\xEC\x18\x01\x00\x00"},
+        {state().native_12652?std::uintptr_t{0x66185A0}:std::uintptr_t{0x66184D0},19,"\x41\x57\x41\x56\x41\x55\x41\x54\x56\x57\x55\x53\x48\x81\xEC\xF8\x01\x00\x00"},
+        {state().native_12652?std::uintptr_t{0x6619D20}:std::uintptr_t{0x6619C50},15,"\x41\x57\x41\x56\x56\x57\x55\x53\x48\x81\xEC\xD8\x00\x00\x00"},
+        {state().native_12652?std::uintptr_t{0x692D1A0}:std::uintptr_t{0x692D0D0},17,"\x41\x57\x41\x56\x41\x54\x56\x57\x55\x53\x48\x81\xEC\xD0\x00\x00\x00"}
     };
     for(const auto& e:entries)
         if(!readable(base+e.rva,e.size)||std::memcmp(reinterpret_cast<void*>(base+e.rva),e.bytes,e.size))return false;
     return true;
 }
 std::vector<LightPatch> lighting_patches(bool fullbright,int level) {
-    const auto& mesh=state().native_12650?light_patches_12650:light_patches;
-    const auto& texture=state().native_12650?texture_patches_12650:texture_patches;
+    const auto& mesh=state().native_12652?light_patches_12652:(state().native_12650?light_patches_12650:light_patches);
+    const auto& texture=state().native_12652?texture_patches_12652:(state().native_12650?texture_patches_12650:texture_patches);
     std::vector<LightPatch> patches(mesh.begin(),mesh.end());
     // At lower levels retain the native light lookup; the white lookup used
     // by maximum Fullbright would otherwise erase the slider's effect.
@@ -363,27 +378,34 @@ bool install() {
     s.image_size=nt->OptionalHeader.SizeOfImage;
     uintptr_t selected_tick=s.base+tick_rva;
     std::array<unsigned char,19> selected_bytes=tick_bytes;
-    if(nt->FileHeader.TimeDateStamp==0x6AA482FD&&s.image_size==0x12C01000){
+    const bool release_12650=nt->FileHeader.TimeDateStamp==0x6AA482FD&&s.image_size==0x12C01000;
+    const bool release_12652=nt->FileHeader.TimeDateStamp==0x6AB54E37&&s.image_size==0x12C01000;
+    if(release_12650||release_12652){
         // Identified from this exact mapped executable: native diagnostic-string
         // xrefs, unwind boundaries, constructor vtable write and renderer callers.
         // Apply/restore/rebuild on the engine's coordinator update, never on the
         // overlay thread. Stack-only stolen instructions need no RIP relocation.
-        selected_tick=s.base+0x1C9D140;selected_bytes[15]=0x48;
-        s.coordinator_table=s.base+0xE7D5B80;s.rebuild_target=s.base+0x1C9C6D0;
+        selected_tick=s.base+(release_12652?0x1C9CE50:0x1C9D140);selected_bytes[15]=0x48;
+        s.coordinator_table=s.base+0xE7D5B80;s.rebuild_target=s.base+(release_12652?0x1C9C3E0:0x1C9C6D0);
         constexpr unsigned char rebuild_bytes[]{0x55,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x56,0x57,0x53,0x48,0x83,0xEC,0x78,0x48,0x8D,0x6C,0x24,0x70};
-        constexpr unsigned char tick_call[]{0x48,0x8B,0x4B,0x18,0xE8,0x27,0x87,0x4A,0xFD};
-        constexpr unsigned char rebuild_call[]{0x48,0x8B,0x4F,0x18,0x31,0xD2,0x45,0x31,0xC0,0xE8,0xE2,0xF2,0x40,0x01};
+        constexpr unsigned char tick_call_12650[]{0x48,0x8B,0x4B,0x18,0xE8,0x27,0x87,0x4A,0xFD};
+        constexpr unsigned char tick_call_12652[]{0x48,0x8B,0x4B,0x18,0xE8,0x67,0x83,0x4A,0xFD};
+        constexpr unsigned char rebuild_call_12650[]{0x48,0x8B,0x4F,0x18,0x31,0xD2,0x45,0x31,0xC0,0xE8,0xE2,0xF2,0x40,0x01};
+        constexpr unsigned char rebuild_call_12652[]{0x48,0x8B,0x4F,0x18,0x31,0xD2,0x45,0x31,0xC0,0xE8,0x32,0xF0,0x40,0x01};
+        const auto* tick_call=release_12652?tick_call_12652:tick_call_12650;
+        const auto* rebuild_call=release_12652?rebuild_call_12652:rebuild_call_12650;
         if(std::memcmp(reinterpret_cast<void*>(selected_tick),selected_bytes.data(),selected_bytes.size())){Logger::instance().info("x-ray: native tick prologue mismatch (possible existing hook).");return false;}
         if(std::memcmp(reinterpret_cast<void*>(s.rebuild_target),rebuild_bytes,sizeof(rebuild_bytes))){Logger::instance().info("x-ray: native rebuild prologue mismatch.");return false;}
-        if(get<uintptr_t>(s.coordinator_table)!=s.base+0x1CBABF0){Logger::instance().info("x-ray: coordinator vtable mismatch.");return false;}
-        if(std::memcmp(reinterpret_cast<void*>(s.base+0x47F4A10),tick_call,sizeof(tick_call))||
-           std::memcmp(reinterpret_cast<void*>(s.base+0x88D3E0),rebuild_call,sizeof(rebuild_call))){Logger::instance().info("x-ray: renderer caller mismatch.");return false;}
+        if(get<uintptr_t>(s.coordinator_table)!=s.base+(release_12652?0x1CBA900:0x1CBABF0)){Logger::instance().info("x-ray: coordinator vtable mismatch.");return false;}
+        if(std::memcmp(reinterpret_cast<void*>(s.base+(release_12652?0x47F4AE0:0x47F4A10)),tick_call,sizeof(tick_call_12650))||
+           std::memcmp(reinterpret_cast<void*>(s.base+(release_12652?0x88D3A0:0x88D3E0)),rebuild_call,sizeof(rebuild_call_12650))){Logger::instance().info("x-ray: renderer caller mismatch.");return false;}
         if(!discover_graphics_registry())Logger::instance().info("x-ray: registry not ready at attach; native tick will retry bounded read-only discovery instead of permanently reporting N/A.");
         s.native_12650=true;
+        s.native_12652=release_12652;
         s.native_lighting_verified=validate_native_lighting();
         Logger::instance().info(s.native_lighting_verified?
-            "Fullbright: exact 26.50 mesh and scalar/vector/End light-lookup sites verified; reversible light levels 9-15 available.":
-            "Fullbright unavailable: 26.50 lighting profile mismatch; working X-ray remains available without lighting patches.");
+            (release_12652?"Fullbright: exact 26.52 mesh and scalar/vector/End light-lookup sites verified; reversible light levels 9-15 available.":"Fullbright: exact 26.50 mesh and scalar/vector/End light-lookup sites verified; reversible light levels 9-15 available."):
+            (release_12652?"Fullbright unavailable: 26.52 lighting profile mismatch; working X-ray remains available without lighting patches.":"Fullbright unavailable: 26.50 lighting profile mismatch; working X-ray remains available without lighting patches."));
     } else {
     if(nt->FileHeader.TimeDateStamp!=0x6A8378BA || s.image_size!=0x12888000) return false;
     s.graphics_vector=s.base+graphics_vector_rva;s.graphics_vtable=s.base+graphics_vtable_rva;
@@ -409,7 +431,7 @@ bool install() {
     if(!success) {s.original=nullptr;VirtualFree(trampoline,0,MEM_RELEASE);return false;}
     s.installed=true;
     Logger::instance().info(s.native_12650?
-        "x-ray: Minecraft 1.26.5101.0 native coordinator hook installed; engine-thread apply, restore and loaded-chunk rebuild connected.":
+        (s.native_12652?"x-ray: Minecraft 1.26.5203.0 native coordinator hook installed; engine-thread apply, restore and loaded-chunk rebuild connected.":"x-ray: Minecraft 1.26.5101.0 native coordinator hook installed; engine-thread apply, restore and loaded-chunk rebuild connected."):
         "x-ray: Minecraft 1.26.4501.0 coordinator hook installed.");return true;
 }
 } // namespace

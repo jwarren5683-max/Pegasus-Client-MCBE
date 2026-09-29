@@ -50,6 +50,7 @@ bool Framework::initialize(HMODULE module) noexcept {
             << std::setw(8) << std::setfill('0') << build.timestamp << ", SizeOfImage 0x"
             << std::setw(8) << build.image_size;
         if (integration::is_release_12650(build)) message << " (Minecraft 1.26.5101.0 exact profile; unverified targets remain disabled).";
+        if (integration::is_release_12652(build)) message << " (Minecraft 1.26.5203.0 exact profile; unverified targets remain disabled).";
         else if (integration::is_release_12645(build)) message << " (Minecraft 1.26.4501.0 legacy profile).";
         else message << " (unsupported profile).";
         Logger::instance().info(message.str());

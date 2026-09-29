@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-09-29 — Auto Fishing input repair
+
+- Diagnosed the first in-world failure from the runtime log: cast and reel
+  right-clicks were released in the same tick, allowing Minecraft to miss the
+  input and leave the hook active.
+- Hold each guarded right-click across game ticks before releasing it, and
+  release immediately when the module is disabled or Auto Leave fires.
+- Verify the selected hotbar item is `minecraft:fishing_rod` before casting,
+  watching a hook, reeling, or recasting.
+
+## 2026-09-29 — Auto Fishing
+
+- Added **Auto Fishing** to the Player menu for the exact 26.50/26.52 local
+  tick profiles.
+- It sends one guarded initial cast, identifies the nearest validated local
+  fishing hook, reels on a sudden mature-hook downward movement, and recasts
+  after the hook disappears.
+- It is local-world and foreground-only. Invalid actor snapshots fail closed,
+  and a failed cast times out instead of repeatedly right-clicking.
+- Added deterministic cast, bite, reel, recast, timeout, foreground, remote,
+  invalid-snapshot, and clock-anomaly tests. All 27 tests pass.
+
+## 2026-09-27 — Minecraft Bedrock 26.52 compatibility
+
+- Added an exact executable profile for Minecraft `1.26.5203.0` (Bedrock
+  26.52) instead of treating the update as an unsupported build.
+- Ported and byte-gated the current native targets for Reach, Block Reach,
+  X-ray, Fullbright, ESP, ChestESP, Auto Leave, Auto Bridge, local chat
+  commands, and world-seed access. Unverified modules continue to fail closed
+  and display `N/A`.
+- Preserved the existing 26.45 and 26.50 profiles and all local/remote-session
+  safety restrictions.
+- Expanded exact-profile regression coverage to 26 tests. A clean Release
+  build, injector self-test, and live title-screen injection all passed; the
+  exact 26.52 hooks initialized and Minecraft remained responsive. Visible
+  behavior in a local world still needs a fresh-session play test.
+
 ## 2026-09-17 — Auto Bridge test candidate
 
 - Added a separate Auto Bridge gameplay module for the current Bedrock profile.

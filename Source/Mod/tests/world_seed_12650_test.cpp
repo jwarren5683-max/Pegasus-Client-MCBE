@@ -25,5 +25,9 @@ int main() {
     require(!returned_expected_buffer(nullptr,&output)&&!returned_expected_buffer(&other,&output),
         "foreign native seed result buffer accepted");
     require(output.value==0xFEDCBA9876543210ULL,"signed 64-bit seed bits changed");
-    std::cout<<"26.50 world-seed targets, fingerprints, and sret ABI passed.\n";
+    require(utility::integration::world_seed_12652::block_source_get_level_rva==0x3462F0&&
+        utility::integration::world_seed_12652::level_get_seed_rva==0x1178860&&
+        utility::integration::world_seed_12652::level_get_seed_signature[20]==0x30,
+        "26.52 world-seed targets or fingerprint changed");
+    std::cout<<"26.50/26.52 world-seed targets, fingerprints, and sret ABI passed.\n";
 }

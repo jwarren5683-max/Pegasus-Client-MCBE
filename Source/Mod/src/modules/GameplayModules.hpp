@@ -3,7 +3,7 @@
 #include <Windows.h>
 
 namespace utility::modules {
-enum class GameplayFeature { esp, autotool, phase, airjump, deathposition, autosprint, chest_esp, triggerbot, jetpack, auto_leave, auto_bridge, navigation_hud, count };
+enum class GameplayFeature { esp, autotool, phase, airjump, deathposition, autosprint, chest_esp, triggerbot, jetpack, auto_leave, auto_bridge, auto_fishing, navigation_hud, count };
 void arm_startup_notice() noexcept;
 void disarm_startup_notice() noexcept;
 class GameplayModule final : public Module {

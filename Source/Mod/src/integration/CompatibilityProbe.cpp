@@ -104,7 +104,7 @@ std::vector<std::uintptr_t> find(const std::byte* begin, std::size_t size,
 
 void log_matches(const Pattern& source, const std::vector<std::uintptr_t>& matches) {
     std::ostringstream message;
-    message << "26.50 probe: " << source.name << " matches=" << matches.size();
+    message << "compatibility probe: " << source.name << " matches=" << matches.size();
     const auto shown = (std::min<std::size_t>)(matches.size(), 12);
     for (std::size_t index = 0; index < shown; ++index)
         message << " rva=0x" << std::uppercase << std::hex << matches[index];
@@ -135,7 +135,7 @@ std::vector<std::uintptr_t> find_pointer_references(const std::byte* base,
 
 void log_pointer_references(const Pattern& source, const std::vector<std::uintptr_t>& references) {
     std::ostringstream message;
-    message << "26.50 probe: " << source.name << " absolute-pointer-refs=" << references.size();
+    message << "compatibility probe: " << source.name << " absolute-pointer-refs=" << references.size();
     const auto shown = (std::min<std::size_t>)(references.size(), 24);
     for (std::size_t index = 0; index < shown; ++index)
         message << " rva=0x" << std::uppercase << std::hex << references[index];
@@ -147,7 +147,7 @@ void log_pointer_references(const Pattern& source, const std::vector<std::uintpt
 
 void run_compatibility_probe() noexcept {
     const auto build = current_bedrock_build();
-    if (!is_release_12650(build)) return;
+    if (!is_supported_modern_release(build)) return;
 
     const auto* base = reinterpret_cast<const std::byte*>(build.image);
     const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);

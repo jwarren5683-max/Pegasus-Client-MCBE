@@ -15,7 +15,7 @@ using System.Windows.Forms;
 
 internal static class Program {
     internal const string DllName = "BedrockUtilityFramework.Xray.dll";
-    internal const string ExpectedHash = "9FED21C8C72AF83A47C75F4E0723B89888610BF3FF96243499229CBF3FF48DF4";
+    internal const string ExpectedHash = "9966479CD8F2960947DED125676DA7E94B9B1CDE03F35426CD30041C6DE25D12";
     internal static string DllPath { get { return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, DllName); } }
     [STAThread] static int Main(string[] args) {
         if (args.Length == 1 && args[0] == "--test-host") { Thread.Sleep(30000); return 0; }
@@ -103,7 +103,7 @@ internal sealed class LokiForm : Form {
         public override string ToString() { return Name + "   /   PID " + Id; }
     }
     internal LokiForm() {
-        Text = "Loki | Minecraft 26.50";
+        Text = "Loki | Minecraft 26.52";
         ClientSize = new Size(580, 490); FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false; StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(5, 9, 15); ForeColor = Color.White;

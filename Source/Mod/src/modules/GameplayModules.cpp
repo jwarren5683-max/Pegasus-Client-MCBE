@@ -6,6 +6,7 @@
 #include "AutoLeavePolicy.hpp"
 #include "AutoLeaveHealth.hpp"
 #include "AutoBridgePolicy.hpp"
+#include "AutoFishingPolicy.hpp"
 #include "AirjumpPolicy.hpp"
 #include "JetpackPolicy.hpp"
 #include "ChestEspContainers.hpp"
@@ -15,6 +16,7 @@
 #include "../integration/NavigationBridge.hpp"
 #include "../integration/ServerSafety.hpp"
 #include "../integration/NavigationNativeLayout.hpp"
+#include "../integration/NavigationInventoryAccess.hpp"
 #include "../integration/BedrockBuild.hpp"
 #include "../framework/Logger.hpp"
 #include "../framework/ChatStyle.hpp"
@@ -61,6 +63,8 @@ std::atomic<float> auto_leave_hearts{auto_leave::default_hearts};
 std::atomic<unsigned> auto_leave_revision{};
 std::atomic_bool auto_leave_ready{};
 std::atomic_bool auto_bridge_ready{};
+std::atomic_bool auto_fishing_ready{};
+std::atomic<unsigned> auto_fishing_revision{};
 auto_leave::Gate auto_leave_gate;
 class DeathPositionTracker final {
 public:
@@ -141,14 +145,16 @@ template<class T> T read(const void* object, std::size_t offset = 0) {
     return result;
 }
 void release_trigger_mouse();
+void release_fishing_mouse();
 void auto_bridge_tick(void* player);
+void auto_fishing_tick(void* player);
 
 bool on(GameplayFeature feature) {
     if(integration::server_safety::remote_session() && feature!=GameplayFeature::auto_leave&&feature!=GameplayFeature::esp&&feature!=GameplayFeature::chest_esp&&feature!=GameplayFeature::navigation_hud) return false;
     if(integration::navigation_owns_controls.load() &&
        (feature==GameplayFeature::autotool||feature==GameplayFeature::phase||feature==GameplayFeature::airjump||
         feature==GameplayFeature::autosprint||feature==GameplayFeature::triggerbot||feature==GameplayFeature::jetpack||
-        feature==GameplayFeature::auto_bridge))return false;
+        feature==GameplayFeature::auto_bridge||feature==GameplayFeature::auto_fishing))return false;
     return flags[static_cast<unsigned>(feature)].load();
 }
 
@@ -157,7 +163,7 @@ bool current_health(void* player,float& health) {
         if(!integration::readable_game_memory(reinterpret_cast<void*>(at),size))return false;
         std::memcpy(output,reinterpret_cast<void*>(at),size);return true;
     };
-    if(integration::is_release_12650(integration::current_bedrock_build())) {
+    if(integration::is_supported_modern_release(integration::current_bedrock_build())) {
         const auto safe_copy=[](std::uintptr_t at,void* output,std::size_t size) {
             SIZE_T got{};return ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<void*>(at),output,size,&got)&&got==size;
         };
@@ -217,21 +223,29 @@ void refresh_world_seed_12650(void* player) noexcept {
     std::int64_t cached{};
     if(integration::current_world_seed(cached)) return;
     const auto* profile=chest_esp::profile(image);
-    if(profile!=&chest_esp::profile_12650||!chest_esp::profile_verified(image)) return;
+    const auto build=integration::current_bedrock_build();
+    if((profile!=&chest_esp::profile_12650&&profile!=&chest_esp::profile_12652)||
+       !chest_esp::profile_verified(image)) return;
     auto* region=read<void*>(dimension,0xF0);
     auto* table=read<void**>(region);
     if(!region||!table||read<void*>(table,block_source_get_chunk_slot_12650)!=image+profile->get_chunk) return;
     using GetLevel=void*(__fastcall*)(void*);
-    using GetSeed=integration::world_seed_12650::LevelSeed64Abi*(__fastcall*)(
-        void*,integration::world_seed_12650::LevelSeed64Abi*);
-    const auto get_level=read<GetLevel>(table,integration::world_seed_12650::block_source_get_level_slot);
-    const auto get_seed=reinterpret_cast<GetSeed>(image+integration::world_seed_12650::level_get_seed_rva);
-    if(reinterpret_cast<Byte*>(get_level)!=image+integration::world_seed_12650::block_source_get_level_rva||
-       std::memcmp(image+integration::world_seed_12650::block_source_get_level_rva,
+    using SeedAbi=integration::world_seed_12650::LevelSeed64Abi;
+    using GetSeed=SeedAbi*(__fastcall*)(void*,SeedAbi*);
+    const bool release_12652=integration::is_release_12652(build);
+    const auto get_level_slot=integration::world_seed_12650::block_source_get_level_slot;
+    const auto get_level_rva=integration::world_seed_12650::block_source_get_level_rva;
+    const auto get_seed_rva=release_12652?integration::world_seed_12652::level_get_seed_rva:
+        integration::world_seed_12650::level_get_seed_rva;
+    const auto* seed_signature=release_12652?integration::world_seed_12652::level_get_seed_signature.data():
+        integration::world_seed_12650::level_get_seed_signature.data();
+    const auto get_level=read<GetLevel>(table,get_level_slot);
+    const auto get_seed=reinterpret_cast<GetSeed>(image+get_seed_rva);
+    if(reinterpret_cast<Byte*>(get_level)!=image+get_level_rva||
+       std::memcmp(image+get_level_rva,
            integration::world_seed_12650::block_source_get_level_signature.data(),
            integration::world_seed_12650::block_source_get_level_signature.size())||
-       std::memcmp(image+integration::world_seed_12650::level_get_seed_rva,
-           integration::world_seed_12650::level_get_seed_signature.data(),
+       std::memcmp(image+get_seed_rva,seed_signature,
            integration::world_seed_12650::level_get_seed_signature.size())||
        !executable_game_code(reinterpret_cast<void*>(get_level))||
        !executable_game_code(reinterpret_cast<void*>(get_seed))) return;
@@ -242,7 +256,7 @@ void refresh_world_seed_12650(void* player) noexcept {
         auto* level_table=read<void**>(level);
         auto* level_data=read<void*>(level_table,integration::world_seed_12650::level_data_vtable_slot);
         if(!level||!level_table||!executable_game_code(level_data)) return;
-        integration::world_seed_12650::LevelSeed64Abi result{};
+        SeedAbi result{};
         const auto* returned=get_seed(level,&result);
         if(!integration::world_seed_12650::returned_expected_buffer(returned,&result)) return;
         seed=result.value;
@@ -254,7 +268,7 @@ void refresh_world_seed_12650(void* player) noexcept {
     }
 #else
     auto* level=get_level(region);
-    integration::world_seed_12650::LevelSeed64Abi result{};
+    SeedAbi result{};
     if(!integration::world_seed_12650::returned_expected_buffer(get_seed(level,&result),&result))return;
     seed=result.value;
 #endif
@@ -264,7 +278,8 @@ void refresh_world_seed_12650(void* player) noexcept {
         return;
     }
     integration::publish_world_seed(seed);
-    Logger::instance().info("World seed acquired through verified Minecraft 26.50 LevelSeed64 ABI.");
+    Logger::instance().info(release_12652?"World seed acquired through verified Minecraft 26.52 LevelSeed64 ABI.":
+        "World seed acquired through verified Minecraft 26.50 LevelSeed64 ABI.");
 }
 
 // IClientInstance::requestLeaveGameAsync is vtable slot 14 in the supported
@@ -275,13 +290,14 @@ bool request_leave_game_async(void* player) noexcept {
     auto* client=read<void*>(player,0xD70);
     auto* table=read<void**>(client);
     auto request=read<RequestLeave>(table,14*sizeof(void*));
-    if(integration::is_release_12650(integration::current_bedrock_build())) {
+    if(integration::is_supported_modern_release(integration::current_bedrock_build())) {
         // Exact ClientInstance vtable and method; its native diagnostic names
         // requestLeaveGameAsync. No arbitrary executable slot is accepted.
         const unsigned char expected[]{0x55,0x56,0x57,0x48,0x81,0xEC,0x00,0x01,0x00,0x00,0x48,0x8D,0xAC,0x24,0x80,0x00,0x00,0x00};
+        const auto target=integration::is_release_12652(integration::current_bedrock_build())?0x5DA3BD0:0x5DA3B00;
         if(!auto_leave_ready.load()||table!=reinterpret_cast<void**>(image+0xE9731B0)||
-            reinterpret_cast<Byte*>(request)!=image+0x5DA3B00||
-            std::memcmp(image+0x5DA3B00,expected,sizeof(expected)))return false;
+            reinterpret_cast<Byte*>(request)!=image+target||
+            std::memcmp(image+target,expected,sizeof(expected)))return false;
     }
     if(!client||!table||!executable_game_code(read<void*>(table))||
        !executable_game_code(reinterpret_cast<void*>(request)))return false;
@@ -301,7 +317,7 @@ void auto_leave_tick(void* player,bool new_player) {
     float health{};
     const bool valid=current_health(player,health);
     if(!auto_leave_gate.update(health,auto_leave_hearts.load(),on(GameplayFeature::auto_leave)&&valid))return;
-    release_trigger_mouse();pending_keys=0;airjump_requests.reset();
+    release_trigger_mouse();release_fishing_mouse();pending_keys=0;airjump_requests.reset();
     char message[160]{};
     std::snprintf(message,sizeof(message),"Auto Leave requested at %.1f hearts (threshold %.1f).",
         static_cast<double>(health/2.0F),static_cast<double>(auto_leave_hearts.load()));
@@ -437,10 +453,10 @@ bool camera_read(const void* object,std::size_t offset,void* output,std::size_t 
 struct CameraSample { float view[16]{}; Vec3 origin{}; Frustum frustum{}; void* dimension{}; };
 bool camera_sample(void* player,CameraSample& sample,const integration::BedrockBuildInfo& build=integration::current_bedrock_build()) {
     void* table{};void* client{};void* renderer{};void* renderer_player{};
-    const std::size_t shift=integration::is_release_12650(build)?8:0;
+    const std::size_t shift=integration::is_supported_modern_release(build)?8:0;
     return camera_read(player,0,&table,sizeof(table)) &&
         (table==image+0xE820EC0 ||
-         (integration::is_release_12650(build)&&player==integration::current_player()&&table==image+0xE8E1BC0)) &&
+         (integration::is_supported_modern_release(build)&&player==integration::current_player()&&table==image+0xE8E1BC0)) &&
         camera_read(player,0x1C8,&sample.dimension,sizeof(sample.dimension)) && sample.dimension &&
         camera_read(player,0xD70,&client,sizeof(client)) &&
         camera_read(client,0x418+shift,sample.view,sizeof(sample.view)) &&
@@ -580,11 +596,11 @@ struct GameString { union { char text[16]; const char* pointer; }; std::size_t s
 };
 struct OptionalString { GameString value; bool present{}; Byte padding[7]{}; };
 bool local_chat_supported_build(const integration::BedrockBuildInfo& build) noexcept {
-    return integration::is_release_12645(build) || integration::is_release_12650(build);
+    return integration::is_release_12645(build) || integration::is_supported_modern_release(build);
 }
 bool local_chat(void* player, const char* text) {
     if(!player||!text||!local_chat_supported_build(integration::current_bedrock_build())) return false;
-    if(integration::is_release_12650(integration::current_bedrock_build()))
+    if(integration::is_supported_modern_release(integration::current_bedrock_build()))
         return integration::native_chat::display_12650(player,0xD70,text);
     auto* chat=read<void*>(read<void*>(player,0xD70),0x648);
     if(!chat||!integration::readable_game_memory(chat,sizeof(void*))) return false;
@@ -862,6 +878,7 @@ void __fastcall esp_tick_12650(void* player) {
         else auto_leave_gate.reset();
     }
     if(auto_bridge_ready.load())auto_bridge_tick(player);
+    if(auto_fishing_ready.load())auto_fishing_tick(player);
     if(on(GameplayFeature::esp)||on(GameplayFeature::navigation_hud)) {
         try {capture_esp_12650();} catch(...) {
             std::lock_guard lock(frame_mutex);frame=Frame{};
@@ -923,6 +940,23 @@ bool emit_bridge_place() {
     if(now-last_log>=1000){last_log=now;Logger::instance().info("Auto Bridge dispatched guarded right-click input.");}
     return true;
 }
+
+bool fishing_button_down{};
+ULONGLONG fishing_button_time{};
+bool start_fishing_action(const char* action) {
+    if(fishing_button_down)return false;
+    if(!controls_active()||integration::server_safety::remote_session())return false;
+    if(!send_trigger_mouse(MOUSEEVENTF_RIGHTDOWN))return false;
+    fishing_button_down=true;fishing_button_time=GetTickCount64();
+    char message[96]{};std::snprintf(message,sizeof(message),"Auto Fishing dispatched guarded %s input.",action);
+    Logger::instance().info(message);return true;
+}
+void release_fishing_mouse() {
+    if(!fishing_button_down)return;
+    bool released=send_trigger_mouse(MOUSEEVENTF_RIGHTUP);
+    if(!released)released=send_trigger_mouse(MOUSEEVENTF_RIGHTUP);
+    if(released){fishing_button_down=false;fishing_button_time=0;}
+}
 void auto_bridge_tick(void* player) {
     static auto_bridge::Cadence cadence;
     static void* previous_player{};static void* previous_dimension{};
@@ -942,7 +976,7 @@ void auto_bridge_tick(void* player) {
     // controls are already disabled by the game when the local player is not
     // interactive. Keep this candidate fail-closed on pointer/dimension only
     // instead of calling an unverified native address.
-    const bool alive=integration::is_release_12650(integration::current_bedrock_build())
+    const bool alive=integration::is_supported_modern_release(integration::current_bedrock_build())
         ? player&&dimension : player&&dimension&&native<bool(__fastcall*)(void*)>(0x26EFD60)(player);
     const auto input=auto_bridge::Input{
         on(GameplayFeature::auto_bridge),
@@ -953,6 +987,95 @@ void auto_bridge_tick(void* player) {
         std::isfinite(pitch)&&pitch>=20.0F&&pitch<=89.5F,
         selected_slot};
     if(cadence.update(now,input).place)emit_bridge_place();
+}
+
+struct FishingHookSample { bool valid{},present{};std::uint64_t id{};float y{}; };
+bool read_actor_identifier(void* actor,std::string& name) {
+    struct ForeignString { char buffer[16];std::size_t size,capacity; } text{};
+    if(!camera_read(actor,0x240,&text,sizeof(text))||!text.size||text.size>64||
+       text.capacity<text.size||text.capacity>4096)return false;
+    name.assign(text.size,'\0');
+    if(text.capacity<16)std::memcpy(name.data(),text.buffer,text.size);
+    else {void* data{};std::memcpy(&data,text.buffer,sizeof(data));if(!camera_read(data,0,name.data(),text.size))return false;}
+    return true;
+}
+FishingHookSample fishing_hook_sample(void* player) {
+    FishingHookSample result{};void* dimension{};std::uintptr_t registry{};std::uint32_t local_id{};
+    void* local_state_pointer{};Vec3 local_positions[2]{};
+    if(!camera_read(player,0x10,&registry,sizeof(registry))||
+       !camera_read(player,0x18,&local_id,sizeof(local_id))||
+       !camera_read(player,0x1C8,&dimension,sizeof(dimension))||!dimension||
+       !camera_read(player,0x218,&local_state_pointer,sizeof(local_state_pointer))||!local_state_pointer||
+       !camera_read(local_state_pointer,0,local_positions,sizeof(local_positions))||!valid(local_positions[0]))return result;
+    const auto copy=[](std::uintptr_t at,void* out,std::size_t bytes){return camera_read(reinterpret_cast<void*>(at),0,out,bytes);};
+    std::vector<esp_snapshot::Actor> actors;
+    if(!esp_snapshot::actors(registry,reinterpret_cast<std::uintptr_t>(player),local_id,actors,copy))return result;
+    result.valid=true;float closest=2500.0F;
+    for(const auto& entry:actors) {
+        auto* actor=reinterpret_cast<void*>(entry.pointer);if(actor==player)continue;
+        void* actor_dimension{};std::string identifier;void* state{};Vec3 positions[2]{};
+        if(!camera_read(actor,0x1C8,&actor_dimension,sizeof(actor_dimension))||actor_dimension!=dimension||
+           !read_actor_identifier(actor,identifier)||
+           (identifier!="minecraft:fishing_hook"&&identifier!="minecraft:fishing_bobber")||
+           !camera_read(actor,0x218,&state,sizeof(state))||!state||
+           !camera_read(state,0,positions,sizeof(positions))||!valid(positions[0]))continue;
+        const auto offset=minus(positions[0],local_positions[0]);const float distance=dot(offset,offset);
+        if(distance>=closest)continue;
+        closest=distance;result.present=true;result.id=entry.entity;result.y=positions[0].y;
+    }
+    return result;
+}
+enum class RodSelection { unreadable, other, fishing_rod };
+RodSelection selected_fishing_rod(void* player) noexcept {
+    if(!player||!image)return RodSelection::unreadable;
+    __try {
+        std::uintptr_t supplies{},inventory{},table{},getter{};unsigned selected{};
+        if(!camera_read(player,0x5B8,&supplies,sizeof(supplies))||!supplies||
+           !camera_read(reinterpret_cast<void*>(supplies),0x10,&selected,sizeof(selected))||selected>8||
+           !camera_read(reinterpret_cast<void*>(supplies),0xB8,&inventory,sizeof(inventory))||!inventory||
+           !camera_read(reinterpret_cast<void*>(inventory),0,&table,sizeof(table))||!table||
+           !camera_read(reinterpret_cast<void*>(table),0x38,&getter,sizeof(getter)))return RodSelection::unreadable;
+        const auto build=integration::current_bedrock_build();
+        const auto base=reinterpret_cast<std::uintptr_t>(image);
+        if(getter<base||getter>=base+build.image_size)return RodSelection::unreadable;
+        const auto stack=reinterpret_cast<std::uintptr_t(__fastcall*)(std::uintptr_t,int)>(getter)(inventory,static_cast<int>(selected));
+        integration::navigation_native::NativeStack held;
+        if(!stack||!integration::navigation_native::capture_stack(stack,held)||!held.valid)return RodSelection::unreadable;
+        return held.count>0&&std::string_view(held.identifier)=="minecraft:fishing_rod"
+            ?RodSelection::fishing_rod:RodSelection::other;
+    }__except(EXCEPTION_EXECUTE_HANDLER){return RodSelection::unreadable;}
+}
+void auto_fishing_tick(void* player) {
+    static auto_fishing::Controller controller;static unsigned revision{};static RodSelection previous_selection=RodSelection::unreadable;
+    const auto current_revision=auto_fishing_revision.load();
+    if(revision!=current_revision){controller.reset();revision=current_revision;previous_selection=RodSelection::unreadable;}
+    const auto now=GetTickCount64();
+    void* dimension{};camera_read(player,0x1C8,&dimension,sizeof(dimension));
+    const bool enabled=on(GameplayFeature::auto_fishing);
+    const bool foreground=controls_active();
+    const bool local=!integration::server_safety::remote_session();
+    if(fishing_button_down) {
+        if(!enabled||!foreground||!local||
+           auto_fishing::click_release_due(fishing_button_time,now))release_fishing_mouse();
+        return;
+    }
+    const auto selection=enabled&&foreground&&local&&dimension?selected_fishing_rod(player):RodSelection::unreadable;
+    if(enabled&&foreground&&local&&dimension&&selection!=previous_selection) {
+        Logger::instance().info(selection==RodSelection::fishing_rod
+            ?"Auto Fishing selected fishing rod verified; automatic cycle armed."
+            :selection==RodSelection::other
+                ?"Auto Fishing waiting: select a fishing rod in the hotbar."
+                :"Auto Fishing waiting: selected hotbar item could not be validated.");
+    }
+    previous_selection=selection;
+    const bool rod=selection==RodSelection::fishing_rod;
+    FishingHookSample hook{};
+    if(rod)hook=fishing_hook_sample(player);
+    const auto decision=controller.update(now,{
+        enabled,local,foreground,player&&dimension,rod,
+        hook.valid,hook.present,hook.id,hook.y});
+    if(decision.reel)start_fishing_action("reel");
+    else if(decision.cast)start_fishing_action("cast");
 }
 void release_trigger_mouse() {
     if(!trigger_button_down)return;
@@ -1228,28 +1351,39 @@ void initialize() {
     const auto* dos=reinterpret_cast<const IMAGE_DOS_HEADER*>(image);
     if(!image||dos->e_magic!=IMAGE_DOS_SIGNATURE)return;
     const auto* nt=reinterpret_cast<const IMAGE_NT_HEADERS64*>(image+dos->e_lfanew);
-    if(nt->FileHeader.TimeDateStamp==0x6AA482FD&&nt->OptionalHeader.SizeOfImage==0x12C01000){
+    const bool release_12650=nt->FileHeader.TimeDateStamp==0x6AA482FD&&nt->OptionalHeader.SizeOfImage==0x12C01000;
+    const bool release_12652=nt->FileHeader.TimeDateStamp==0x6AB54E37&&nt->OptionalHeader.SizeOfImage==0x12C01000;
+    if(release_12650||release_12652){
         esp_ready=false;
         constexpr Byte prologue[]{0x55,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x56,0x57,0x53,0x48,0x81,0xEC,0xD8,0x02,0,0};
-        original_tick=native<Tick>(0x475EE60);
-        if(std::memcmp(image+0x475EE60,prologue,sizeof(prologue))||
+        const std::uintptr_t tick_rva=release_12652?0x475EF30:0x475EE60;
+        original_tick=native<Tick>(tick_rva);
+        if(std::memcmp(image+tick_rva,prologue,sizeof(prologue))||
            !swap_slot(0xE8E1BC0+0xC0,reinterpret_cast<void*>(original_tick),reinterpret_cast<void*>(&esp_tick_12650))) {
-            Logger::instance().info("ESP unavailable: exact 26.50 local tick slot/prologue mismatch.");return;
+            Logger::instance().info("ESP unavailable: exact modern local tick slot/prologue mismatch.");return;
         }
         auto_bridge_ready=true;
-        Logger::instance().info("Auto Bridge: 26.50 local tick connected; guarded input-assist candidate ready (V+W+Space, look down).");
-        Logger::instance().info("ESP: 26.50 read-only packed snapshots connected to validated native local tick; waiting for local registry and camera validation. No native actor-list calls.");
-        Logger::instance().info("Local chat display: exact 26.50 GuiData acquisition slot, display ABI/RVA, and cleanup verified.");
+        auto_fishing_ready=true;
+        Logger::instance().info(release_12652?"Auto Bridge: 26.52 local tick connected; guarded input-assist candidate ready (V+W+Space, look down).":"Auto Bridge: 26.50 local tick connected; guarded input-assist candidate ready (V+W+Space, look down).");
+        Logger::instance().info(release_12652?"Auto Fishing: 26.52 local hook snapshots connected; guarded cast, bite detection, reel and recast ready.":"Auto Fishing: 26.50 local hook snapshots connected; guarded cast, bite detection, reel and recast ready.");
+        Logger::instance().info(release_12652?"ESP: 26.52 read-only packed snapshots connected to validated native local tick; waiting for local registry and camera validation. No native actor-list calls.":"ESP: 26.50 read-only packed snapshots connected to validated native local tick; waiting for local registry and camera validation. No native actor-list calls.");
+        Logger::instance().info(release_12652?"Local chat display: exact 26.52 GuiData acquisition slot, display ABI/RVA, and cleanup verified.":"Local chat display: exact 26.50 GuiData acquisition slot, display ABI/RVA, and cleanup verified.");
         constexpr Byte leave_prologue[]{0x55,0x56,0x57,0x48,0x81,0xEC,0x00,0x01,0x00,0x00,0x48,0x8D,0xAC,0x24,0x80,0x00,0x00,0x00};
         constexpr Byte component_stride[]{0x4B,0x8D,0x04,0x80,0xC1,0xE0,0x04,0x48,0x01,0xC1};
         constexpr Byte instance_stride[]{0x4D,0x89,0xD0,0x4D,0x29,0xC8,0x4D,0x89,0xC1,0x49,0xC1,0xE1,0x05,0x4F,0x8D,0x04,0x41,0x4C,0x03,0x41,0x18};
-        auto_leave_ready=read<void*>(image,0xE9731B0+14*8)==image+0x5DA3B00&&
-            !std::memcmp(image+0x5DA3B00,leave_prologue,sizeof(leave_prologue))&&
-            !std::memcmp(image+0x2539878,component_stride,sizeof(component_stride))&&
-            !std::memcmp(image+0x31A129D,instance_stride,sizeof(instance_stride));
-        Logger::instance().info(auto_leave_ready.load()?"AutoLeave: exact 26.50 save/disconnect method verified; LocalPlayer tick health monitor connected, waiting for validated health attributes.":"AutoLeave unavailable: exact 26.50 leave-game method mismatch.");
+        const std::uintptr_t leave_rva=release_12652?0x5DA3BD0:0x5DA3B00;
+        const bool attributes_verified=release_12652?
+            (!std::memcmp(image+0x2539618,component_stride,sizeof(component_stride))&&
+             !std::memcmp(image+0x2539738,component_stride,sizeof(component_stride))&&
+             !std::memcmp(image+0x31A112D,instance_stride,sizeof(instance_stride))&&
+             !std::memcmp(image+0x31A124D,instance_stride,sizeof(instance_stride))):
+            (!std::memcmp(image+0x2539878,component_stride,sizeof(component_stride))&&
+             !std::memcmp(image+0x31A129D,instance_stride,sizeof(instance_stride)));
+        auto_leave_ready=read<void*>(image,0xE9731B0+14*8)==image+leave_rva&&
+            !std::memcmp(image+leave_rva,leave_prologue,sizeof(leave_prologue))&&attributes_verified;
+        Logger::instance().info(auto_leave_ready.load()?(release_12652?"AutoLeave: exact 26.52 save/disconnect method and attribute strides verified; LocalPlayer tick health monitor connected.":"AutoLeave: exact 26.50 save/disconnect method verified; LocalPlayer tick health monitor connected, waiting for validated health attributes."):(release_12652?"AutoLeave unavailable: exact 26.52 leave-game or attribute-layout fingerprint mismatch.":"AutoLeave unavailable: exact 26.50 leave-game method mismatch."));
         chest_ready=chest_esp::profile_verified(image);
-        Logger::instance().info(chest_ready.load()?"ChestESP: exact 26.50 block/chunk lookup prologues verified; native local tick and +0x50 storage bounds connected.":"ChestESP unavailable: exact 26.50 native storage profile mismatch.");return;
+        Logger::instance().info(chest_ready.load()?(release_12652?"ChestESP: exact 26.52 block/chunk lookup prologues verified; native local tick and +0x50 storage bounds connected.":"ChestESP: exact 26.50 block/chunk lookup prologues verified; native local tick and +0x50 storage bounds connected."):(release_12652?"ChestESP unavailable: exact 26.52 native storage profile mismatch.":"ChestESP unavailable: exact 26.50 native storage profile mismatch."));return;
     }
     if(nt->FileHeader.TimeDateStamp!=0x6A8378BA||nt->OptionalHeader.SizeOfImage!=0x12888000)return;
     struct Slot { std::uintptr_t rva,target; void* hook; };
@@ -1278,6 +1412,7 @@ void initialize() {
         reinterpret_cast<void*>(&server_tick_hook));
     trigger_ready=verify_triggerbot();
     auto_bridge_ready=true;
+    auto_fishing_ready=false;
     Logger::instance().info(trigger_ready.load()?"Trigger Bot ready for local worlds; safe input delivery active.":
         "Trigger Bot unavailable: target-picker signature mismatch.");
     esp_ready=true;ready=true;Logger::instance().info("Native gameplay modules initialized for Minecraft 1.26.4501.0.");
@@ -1288,21 +1423,22 @@ void arm_startup_notice() noexcept { startup_notice.arm(); }
 void disarm_startup_notice() noexcept { startup_notice.disarm(); }
 
 std::string_view GameplayModule::name() const noexcept {
-    constexpr std::string_view names[]{"ESP","Autotool","Phase","Airjump","deathposition","autosprint","ChestESP","triggerbot","Jetpack","Auto Leave","Auto Bridge","Navigation HUD"};
+    constexpr std::string_view names[]{"ESP","Autotool","Phase","Airjump","deathposition","autosprint","ChestESP","triggerbot","Jetpack","Auto Leave","Auto Bridge","Auto Fishing","Navigation HUD"};
     return names[static_cast<unsigned>(feature_)];
 }
 ModuleCategory GameplayModule::category() const noexcept {
     switch(feature_){case GameplayFeature::triggerbot:case GameplayFeature::auto_leave:return ModuleCategory::combat;
     case GameplayFeature::esp:case GameplayFeature::chest_esp:case GameplayFeature::navigation_hud:return ModuleCategory::visual;
-    case GameplayFeature::autotool:case GameplayFeature::deathposition:return ModuleCategory::player;
+    case GameplayFeature::autotool:case GameplayFeature::deathposition:case GameplayFeature::auto_fishing:return ModuleCategory::player;
     default:return ModuleCategory::movement;}
 }
 bool GameplayModule::available() const noexcept {
-    if(feature_==GameplayFeature::auto_leave&&integration::is_release_12650(integration::current_bedrock_build())) {
+    if(feature_==GameplayFeature::auto_leave&&integration::is_supported_modern_release(integration::current_bedrock_build())) {
         float health{};return auto_leave_ready.load()&&current_health(integration::current_player(),health);
     }
     if(feature_==GameplayFeature::auto_bridge) return auto_bridge_ready.load();
-    if(feature_==GameplayFeature::deathposition&&integration::is_release_12650(integration::current_bedrock_build())) {
+    if(feature_==GameplayFeature::auto_fishing) return auto_fishing_ready.load();
+    if(feature_==GameplayFeature::deathposition&&integration::is_supported_modern_release(integration::current_bedrock_build())) {
         if(!image) return false;
         void* player=integration::current_player();
         float health{};
@@ -1312,8 +1448,8 @@ bool GameplayModule::available() const noexcept {
             camera_read(player,0x220,&shape,sizeof(shape))&&shape&&
             camera_read(shape,0,&position,sizeof(position))&&valid(position);
     }
-    if(feature_==GameplayFeature::esp||feature_==GameplayFeature::navigation_hud||(feature_==GameplayFeature::chest_esp&&integration::is_release_12650(integration::current_bedrock_build()))) {
-        if(integration::is_release_12650(integration::current_bedrock_build())) {
+    if(feature_==GameplayFeature::esp||feature_==GameplayFeature::navigation_hud||(feature_==GameplayFeature::chest_esp&&integration::is_supported_modern_release(integration::current_bedrock_build()))) {
+        if(integration::is_supported_modern_release(integration::current_bedrock_build())) {
             static std::mutex validation_mutex;std::lock_guard lock(validation_mutex);
             static double previous{};const double now=esp_time();
             if(now-previous>=0.5) {
@@ -1336,8 +1472,8 @@ bool GameplayModule::available() const noexcept {
 }
 bool GameplayModule::allowed_on_remote_server() const noexcept { return feature_==GameplayFeature::auto_leave||feature_==GameplayFeature::esp||feature_==GameplayFeature::chest_esp||feature_==GameplayFeature::navigation_hud; }
 void GameplayModule::on_register(EventBus&) { initialize(); }
-void GameplayModule::on_enable() { if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;Logger::instance().info("Trigger Bot enabled for local-world input delivery.");} if(feature_==GameplayFeature::auto_leave){++auto_leave_revision;Logger::instance().info("Auto Leave enabled.");} if(feature_==GameplayFeature::auto_bridge)Logger::instance().info("Auto Bridge enabled: keyboard V+W+Space or controller LB/RB/RT + left-stick-forward + A; look down."); flags[static_cast<unsigned>(feature_)]=true; }
-void GameplayModule::on_disable() { flags[static_cast<unsigned>(feature_)]=false; if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;release_trigger_mouse();Logger::instance().info("Trigger Bot disabled.");} if(feature_==GameplayFeature::auto_leave)++auto_leave_revision; if(feature_==GameplayFeature::auto_bridge)Logger::instance().info("Auto Bridge disabled."); }
+void GameplayModule::on_enable() { if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;Logger::instance().info("Trigger Bot enabled for local-world input delivery.");} if(feature_==GameplayFeature::auto_leave){++auto_leave_revision;Logger::instance().info("Auto Leave enabled.");} if(feature_==GameplayFeature::auto_bridge)Logger::instance().info("Auto Bridge enabled: keyboard V+W+Space or controller LB/RB/RT + left-stick-forward + A; look down."); if(feature_==GameplayFeature::auto_fishing){++auto_fishing_revision;Logger::instance().info("Auto Fishing enabled: hold a fishing rod and face open water; one guarded cast will start the cycle.");} flags[static_cast<unsigned>(feature_)]=true; }
+void GameplayModule::on_disable() { flags[static_cast<unsigned>(feature_)]=false; if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;release_trigger_mouse();Logger::instance().info("Trigger Bot disabled.");} if(feature_==GameplayFeature::auto_leave)++auto_leave_revision; if(feature_==GameplayFeature::auto_bridge)Logger::instance().info("Auto Bridge disabled."); if(feature_==GameplayFeature::auto_fishing){++auto_fishing_revision;release_fishing_mouse();Logger::instance().info("Auto Fishing disabled.");} }
 bool GameplayModule::has_value() const noexcept { return feature_==GameplayFeature::jetpack||feature_==GameplayFeature::auto_leave||feature_==GameplayFeature::navigation_hud; }
 std::string_view GameplayModule::value_label() const noexcept { return feature_==GameplayFeature::auto_leave?"Leave at":feature_==GameplayFeature::navigation_hud?"Range":"Speed"; }
 std::string_view GameplayModule::value_suffix() const noexcept { return feature_==GameplayFeature::auto_leave?" hearts":feature_==GameplayFeature::navigation_hud?" blocks":" blocks/s"; }

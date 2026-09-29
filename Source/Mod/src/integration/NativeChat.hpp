@@ -89,10 +89,10 @@ inline void release_one(void* reference_count, const Byte* image, std::size_t im
 }
 
 inline bool invoke_display(void* gui_data, const NativeString* message,
-    const OptionalString* source, const Byte* image) noexcept {
+    const OptionalString* source, const Byte* image, const chat_compat::Profile& profile) noexcept {
     __try {
         using Display = void(__fastcall*)(void*, const NativeString*, const OptionalString*, bool);
-        reinterpret_cast<Display>(const_cast<Byte*>(image) + chat_compat::release_12650.display_rva)(
+        reinterpret_cast<Display>(const_cast<Byte*>(image) + profile.display_rva)(
             gui_data, message, source, false);
         return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) {
@@ -109,8 +109,10 @@ inline bool display_12650(void* owner, std::size_t client_offset, const char* te
 #else
     const auto build = current_bedrock_build();
     auto* image = reinterpret_cast<Byte*>(GetModuleHandleW(nullptr));
-    if (!owner || !text || !image || !is_release_12650(build) ||
-        std::memcmp(image + chat_compat::release_12650.display_rva,
+    const auto* profile = chat_compat::select(build.timestamp, build.image_size);
+    if (!owner || !text || !image || !is_supported_modern_release(build) ||
+        !chat_compat::uses_modern_display(profile) ||
+        std::memcmp(image + profile->display_rva,
             chat_compat::display_12650_signature.data(), chat_compat::display_12650_signature.size()) != 0)
         return false;
     void* client{};
@@ -120,9 +122,9 @@ inline bool display_12650(void* owner, std::size_t client_offset, const char* te
     if (!acquire_gui_data(client, handle, image, build.image_size)) return false;
     const NativeString message(text);
     const OptionalString source{};
-    const bool shown = invoke_display(handle.gui_data, &message, &source, image);
+    const bool shown = invoke_display(handle.gui_data, &message, &source, image, *profile);
     // The returned NonOwnerPointer owns two references sharing this control
-    // block. This is the exact cleanup emitted at each verified 26.50 caller.
+    // block. This is the exact cleanup emitted at each verified modern caller.
     release_one(handle.reference_count, image, build.image_size);
     release_one(handle.reference_count, image, build.image_size);
     return shown;

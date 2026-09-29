@@ -222,7 +222,7 @@ int main(){
 
     static_assert(sizeof(GameString)==32);
     static_assert(sizeof(OptionalString)==40);
-    GameplayModule jump(GameplayFeature::airjump),phase(GameplayFeature::phase),esp(GameplayFeature::esp),leave(GameplayFeature::auto_leave);
+    GameplayModule jump(GameplayFeature::airjump),phase(GameplayFeature::phase),esp(GameplayFeature::esp),leave(GameplayFeature::auto_leave),fishing(GameplayFeature::auto_fishing);
     esp_ready=false;check(!esp.available(),"unverified ESP remains unavailable");
     esp_ready=true;check(esp.available(),"verified ESP readiness is independent of other feature flags");
     esp_ready=false;
@@ -262,6 +262,11 @@ int main(){
         "Auto Leave exposes a four-heart default slider");
     leave_settings.set_value(3.26F);check(leave_settings.value()==3.5F,"Auto Leave snaps to half hearts");
     leave_settings.adjust_value(-1);check(leave_settings.value()==3.0F,"Auto Leave slider uses half-heart steps");
+    auto_fishing_ready=true;
+    check(fishing.name()=="Auto Fishing"&&fishing.category()==utility::ModuleCategory::player&&
+        fishing.available()&&!fishing.allowed_on_remote_server(),
+        "Auto Fishing is a verified local-only Player module");
+    auto_fishing_ready=false;
     GameplayModule navigation_hud(GameplayFeature::navigation_hud);
     utility::Module& navigation_settings_module=navigation_hud;
     check(navigation_hud.name()=="Navigation HUD"&&navigation_hud.category()==utility::ModuleCategory::visual&&
