@@ -53,7 +53,7 @@ int main() {
         const auto loki=execute(".loki");
         require(loki.size()==2,"loki command must return two lines");
         require(loki[0]=="Loki | Minecraft 26.52","loki build line");
-        require(loki[1]=="Confirmed: Reach, Block Reach, X-Ray, Fullbright, ESP, ChestESP, Auto Leave, Auto Bridge","loki feature line");
+        require(loki[1]=="Confirmed: Reach, Block Reach, X-Ray, Fullbright, ESP, ChestESP, Auto Leave, Auto Bridge, Auto Fishing","loki feature line");
         require(execute(".loki extra")[0].starts_with("Usage: .loki"),"loki arity");
         integration::reset_world_seed();
         require(execute(".seed")[0].find("not available")!=std::string::npos,"seed unavailable feedback");

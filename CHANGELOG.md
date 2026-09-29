@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-29 — Auto Fishing
+
+- Added **Auto Fishing** to the Player menu for the exact 26.50/26.52 local
+  tick profiles.
+- It sends one guarded initial cast, identifies the nearest validated local
+  fishing hook, reels on a sudden mature-hook downward movement, and recasts
+  after the hook disappears.
+- It is local-world and foreground-only. Invalid actor snapshots fail closed,
+  and a failed cast times out instead of repeatedly right-clicking.
+- Added deterministic cast, bite, reel, recast, timeout, foreground, remote,
+  invalid-snapshot, and clock-anomaly tests. All 27 tests pass.
+
 ## 2026-09-27 — Minecraft Bedrock 26.52 compatibility
 
 - Added an exact executable profile for Minecraft `1.26.5203.0` (Bedrock
