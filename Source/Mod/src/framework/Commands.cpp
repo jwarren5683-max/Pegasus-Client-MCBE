@@ -198,12 +198,10 @@ bool Commands::execute(std::string_view text, ModuleManager& modules, std::vecto
         XpRequestHandler handler;
         {std::lock_guard lock(mutex_);handler=xp_request_handler_;}
         const auto result=handler?handler(amount,levels):XpRequestResult::unavailable;
-        if(result==XpRequestResult::queued)
-            replies.emplace_back(std::string(chat_style::green)+"XP change queued: "+chat_style::white+
+        if(result==XpRequestResult::applied)
+            replies.emplace_back(std::string(chat_style::green)+"XP changed: "+chat_style::white+
                 std::to_string(amount)+(levels?" levels.":" points."));
-        else if(result==XpRequestResult::busy)
-            replies.emplace_back(std::string(chat_style::yellow)+"An XP change is already queued.");
-        else replies.emplace_back("XP changes are only available in a local world on Minecraft 26.52.");
+        else replies.emplace_back("XP is unavailable: load Minecraft 26.52 and enter a world first.");
         return true;
     }
     if (name == "binds") {

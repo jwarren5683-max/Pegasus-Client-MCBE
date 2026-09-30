@@ -67,21 +67,19 @@ int main() {
         integration::reset_world_seed();
         std::vector<std::pair<int,bool>> xp_requests;
         commands.set_xp_request_handler([&](int amount,bool levels){
-            xp_requests.emplace_back(amount,levels);return Commands::XpRequestResult::queued;
+            xp_requests.emplace_back(amount,levels);return Commands::XpRequestResult::applied;
         });
-        require(execute(".xp 25")[0]=="XP change queued: 25 points."&&xp_requests.back()==std::pair{25,false},"xp points");
-        require(execute(".XP -3L")[0]=="XP change queued: -3 levels."&&xp_requests.back()==std::pair{-3,true},"xp levels");
-        require(execute(".xp +4l")[0]=="XP change queued: 4 levels."&&xp_requests.back()==std::pair{4,true},"xp plus sign");
+        require(execute(".xp 25")[0]=="XP changed: 25 points."&&xp_requests.back()==std::pair{25,false},"xp points");
+        require(execute(".XP -3L")[0]=="XP changed: -3 levels."&&xp_requests.back()==std::pair{-3,true},"xp levels");
+        require(execute(".xp +4l")[0]=="XP changed: 4 levels."&&xp_requests.back()==std::pair{4,true},"xp plus sign");
         const auto xp_count=xp_requests.size();
         require(execute(".xp")[0].starts_with("Usage:")&&execute(".xp 1 2")[0].starts_with("Usage:"),"xp arity");
         require(execute(".xp ")[0].starts_with("Usage:"),"xp blank amount");
         for(const auto invalid:{"L","+L","1.5","12LL","999999999999999999999"})
             require(execute(std::string(".xp ")+invalid)[0].find("Invalid")!=std::string::npos,"xp invalid amount");
         require(xp_requests.size()==xp_count,"invalid xp reached native handler");
-        commands.set_xp_request_handler([](int,bool){return Commands::XpRequestResult::busy;});
-        require(execute(".xp 1")[0].find("already queued")!=std::string::npos,"xp busy feedback");
         commands.set_xp_request_handler([](int,bool){return Commands::XpRequestResult::unavailable;});
-        require(execute(".xp 1")[0].find("local world")!=std::string::npos,"xp unavailable feedback");
+        require(execute(".xp 1")[0].find("enter a world")!=std::string::npos,"xp unavailable feedback");
         std::vector<std::string> clipboard;
         commands.set_clipboard_writer([&](std::string_view text){clipboard.emplace_back(text);return true;});
         require(execute(".copy")[0].starts_with("Usage: .copy"),"copy arity");

@@ -3,7 +3,7 @@
 Source and matching Windows binaries for the Loki utility mod and its desktop injector. See [BUILDING.md](BUILDING.md) for build and verification instructions and [CHANGELOG.md](CHANGELOG.md) for tested updates.
 
 **Current branch build: Loki 2.3 XP Test.** This branch starts from the
-user-tested Loki 2.2 Auto Fishing release and adds a guarded local-world
+user-tested Loki 2.2 Auto Fishing release and adds a Minecraft 26.52
 `.xp <amount>[L]` command. The 2.2 build on `main` remains unchanged.
 
 Minecraft `1.26.5203.0` (Bedrock 26.52) is recognized by an exact executable profile. The verified 26.52 ports cover Reach, Block Reach, X-ray, Fullbright, ESP, ChestESP, Auto Leave, Auto Bridge, Auto Fishing, local commands, and world-seed access. Features whose native interfaces are still unverified remain `N/A` rather than reusing addresses from an older game build.
@@ -21,7 +21,7 @@ Minecraft `1.26.5203.0` (Bedrock 26.52) is recognized by an exact executable pro
 - You can type '.help' in the chat while the client is loaded in your game and it will show you some commands the client provides.
 - Type '.loki' to show the current Loki build and the features confirmed working on 26.52.
 - Type '.seed' to show the signed 64-bit seed currently exposed to the client. Remote servers may expose `0` or another server-provided value.
-- Type `.xp 25` to add XP points or `.xp 5L` to add XP levels. Negative values remove XP. The request is applied on the integrated server player tick and is unavailable on remote servers.
+- Type `.xp 25` to add XP points or `.xp 5L` to add XP levels. Negative values remove XP. Like Horion's command, it invokes the current player's native XP method directly; an authoritative remote server may replace or reject client-side changes.
 - Type '.binds' to list the Loki modules currently assigned to keys and whether each binding is toggle or keyhold.
 - Use '.copy seed', '.copy coords', or '.copy binds' to place that Loki information directly on the Windows clipboard.
 - Loki displays `[Loki] Loaded` once after the local player and 26.52 chat UI are ready. The chat submit target, controller/input layout, `GuiData` acquisition, display ABI/RVA, and native reference cleanup are exact-build gated.

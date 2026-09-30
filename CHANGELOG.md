@@ -8,9 +8,10 @@
   XP command identifies `Player::addExperience` at vtable slot `0x6B8` and
   `Player::addLevels` at `0x6C0`. Loki checks the exact command-dispatch bytes
   before using either slot.
-- Queue XP changes from chat and execute them once on the integrated server's
-  authoritative player tick. Remote servers, unsupported builds, stale player
-  objects, altered signatures, and non-executable method targets fail closed.
+- Invoke the current player's XP method directly, matching Horion's behavior.
+  No local-world policy gate, artificial amount cap, cooldown, or pending-request
+  limit is applied. Exact-build, native-method, and player-pointer validation
+  remain because they are required for 26.52 compatibility and crash prevention.
 - Kept Loki 2.2 on `main` unchanged; this build is isolated on the 2.3 XP test
   branch.
 

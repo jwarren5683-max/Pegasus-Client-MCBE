@@ -11,7 +11,7 @@ class Module;
 class ModuleManager;
 class Commands final {
 public:
-    enum class XpRequestResult { queued, unavailable, busy };
+    enum class XpRequestResult { applied, unavailable };
     using XpRequestHandler = std::function<XpRequestResult(int,bool)>;
     static constexpr char prefix = '.';
     // true always means consume locally, including invalid local commands.

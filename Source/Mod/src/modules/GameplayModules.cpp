@@ -15,7 +15,6 @@
 #include "../integration/WorldSeed12650.hpp"
 #include "../integration/NavigationBridge.hpp"
 #include "../integration/ServerSafety.hpp"
-#include "../integration/XpCommand12652.hpp"
 #include "../integration/NavigationNativeLayout.hpp"
 #include "../integration/NavigationInventoryAccess.hpp"
 #include "../integration/BedrockBuild.hpp"
@@ -1214,14 +1213,7 @@ void __fastcall tick_hook(void* player) {
     dispatch_jetpack_tick(player,local_tick_features,true);
 }
 void __fastcall server_tick_hook(void* player) {
-    if(our_player(player)) {
-        integration::server_safety::observe_integrated_server_tick();
-        const auto result=integration::xp_12652::apply_pending(player);
-        if(result==integration::xp_12652::ApplyResult::applied)
-            Logger::instance().info("Applied queued XP change on the integrated server player tick.");
-        else if(result==integration::xp_12652::ApplyResult::rejected)
-            Logger::instance().info("Rejected queued XP change: 26.52 native XP dispatch validation failed.");
-    }
+    if(our_player(player)) integration::server_safety::observe_integrated_server_tick();
     dispatch_jetpack_tick(player,original_server_tick,our_player(player));
 }
 // The native closest-space system only adds horizontal ejection velocity.
