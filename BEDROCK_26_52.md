@@ -13,7 +13,9 @@ affected feature unavailable.
 - Auto Leave, Auto Bridge, and Auto Fishing
 - Local period commands and world-seed access
 
-Remote-server restrictions remain unchanged. Features whose 26.52 native
+Auto Fishing is available in local and remote worlds and sends ordinary
+foreground right-click input while a fishing rod is selected. Other
+remote-server restrictions remain unchanged. Features whose 26.52 native
 interfaces have not been verified, including Phase, Speed, Ghost Hand,
 AntiKnockback, Criticals, and Baritone, remain `N/A`.
 

@@ -76,8 +76,11 @@ jobs:
           Copy-Item './BedrockUtilityFramework.Xray.dll' './artifact/Loki/'
           Copy-Item './README.md' './artifact/Loki/'
           Copy-Item './BUILDING.md' './artifact/Loki/'
+          Copy-Item './CHANGELOG.md' './artifact/Loki/'
           Copy-Item './BEDROCK_26_50.md' './artifact/Loki/'
+          Copy-Item './BEDROCK_26_52.md' './artifact/Loki/'
           Copy-Item './TESTING_26_50.md' './artifact/Loki/'
+          Copy-Item './SHA256SUMS.txt' './artifact/Loki/'
           Copy-Item './self-test-result.txt' './artifact/Loki/'
           Copy-Item $scanner './artifact/Loki/tools/'
           Get-FileHash './artifact/Loki/Loki.exe' -Algorithm SHA256 | Format-List
@@ -86,7 +89,7 @@ jobs:
       - name: Upload downloadable build
         uses: actions/upload-artifact@v4
         with:
-          name: Loki-Windows-x64-${{ github.sha }}
+          name: Loki-2.2-Windows-x64-${{ github.sha }}
           path: artifact/Loki
           if-no-files-found: error
           retention-days: 14
