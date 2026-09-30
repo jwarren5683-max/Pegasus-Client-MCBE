@@ -2,9 +2,8 @@
 
 Source and matching Windows binaries for the Loki utility mod and its desktop injector. See [BUILDING.md](BUILDING.md) for build and verification instructions and [CHANGELOG.md](CHANGELOG.md) for tested updates.
 
-**Current branch build: Loki 2.3 XP Test.** This branch starts from the
-user-tested Loki 2.2 Auto Fishing release and adds a Minecraft 26.52
-`.xp <amount>[L]` command. The 2.2 build on `main` remains unchanged.
+**Current release: Loki 2.3.** This release includes the user-tested Loki 2.2
+Auto Fishing build and adds the Minecraft 26.52 `.xp <amount>[L]` command.
 
 Minecraft `1.26.5203.0` (Bedrock 26.52) is recognized by an exact executable profile. The verified 26.52 ports cover Reach, Block Reach, X-ray, Fullbright, ESP, ChestESP, Auto Leave, Auto Bridge, Auto Fishing, local commands, and world-seed access. Features whose native interfaces are still unverified remain `N/A` rather than reusing addresses from an older game build.
 

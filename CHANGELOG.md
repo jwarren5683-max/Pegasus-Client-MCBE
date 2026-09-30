@@ -1,6 +1,6 @@
 # Changelog
 
-## 2026-09-30 — Loki 2.3 XP test
+## 2026-09-30 — Loki 2.3
 
 - Added `.xp <amount>[L]`, following the established Horion behavior: a plain
   amount changes XP points and an `L` suffix changes levels.
@@ -16,9 +16,6 @@
   by old Horion are now empty return stubs. Loki now calls the real inherited
   `Player::addExperience` / `Player::addLevels` implementations used by the
   native XP command instead of reporting success after a no-op virtual call.
-- Kept Loki 2.2 on `main` unchanged; this build is isolated on the 2.3 XP test
-  branch.
-
 ## 2026-09-29 — Remote Auto Fishing
 
 - Allowed Auto Fishing in remote worlds while retaining foreground, selected-rod,

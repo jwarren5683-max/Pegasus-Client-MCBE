@@ -52,7 +52,7 @@ int main() {
         for (const auto& line:help) require(line.find('\n')==std::string::npos && line.size()<140,"help must stay concise");
         const auto loki=execute(".loki");
         require(loki.size()==2,"loki command must return two lines");
-        require(loki[0]=="Loki 2.3 XP Test | Minecraft 26.52","loki build line");
+        require(loki[0]=="Loki 2.3 | Minecraft 26.52","loki build line");
         require(loki[1]=="Confirmed: Reach, Block Reach, X-Ray, Fullbright, ESP, ChestESP, Auto Leave, Auto Bridge, Auto Fishing","loki feature line");
         require(execute(".loki extra")[0].starts_with("Usage: .loki"),"loki arity");
         integration::reset_world_seed();
