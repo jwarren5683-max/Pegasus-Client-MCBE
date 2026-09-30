@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-09-29 — Remote Auto Fishing
+
+- Allowed Auto Fishing in remote worlds while retaining foreground, selected-rod,
+  valid-hook, bounded-retry, and ordinary right-click input checks.
+- Other gameplay-altering modules remain restricted by the remote-session policy.
+
 ## 2026-09-29 — Auto Fishing cycle recovery
 
 - Increased the guarded right-click hold so casts cross multiple Bedrock input ticks.

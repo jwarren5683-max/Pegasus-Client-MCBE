@@ -10,7 +10,16 @@ void require(bool condition,const char* message) {
     if(!condition){std::cerr<<"FAIL: "<<message<<'\n';std::exit(1);}
 }
 Input safe(bool hook=false,std::uint64_t id=0,float y=0.0F) {
-    return {true,true,true,true,true,true,hook,id,y};
+    Input input{};
+    input.enabled=true;
+    input.foreground=true;
+    input.alive=true;
+    input.rod_selected=true;
+    input.sample_valid=true;
+    input.hook_present=hook;
+    input.hook_id=id;
+    input.hook_y=y;
+    return input;
 }
 }
 
@@ -49,9 +58,7 @@ int main() {
     require(!controller.update(9000,safe(true,9,5.0F)).reel,"manual hook appearance rearms observation");
 
     controller.reset();
-    auto input=safe();input.local_world=false;
-    require(!controller.update(100,input).cast,"remote sessions never cast");
-    input=safe();input.foreground=false;
+    auto input=safe();input.foreground=false;
     require(!controller.update(200,input).cast,"background game never casts");
     input=safe();input.rod_selected=false;
     require(!controller.update(250,input).cast,"non-rod held item never casts");

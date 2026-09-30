@@ -264,8 +264,8 @@ int main(){
     leave_settings.adjust_value(-1);check(leave_settings.value()==3.0F,"Auto Leave slider uses half-heart steps");
     auto_fishing_ready=true;
     check(fishing.name()=="Auto Fishing"&&fishing.category()==utility::ModuleCategory::player&&
-        fishing.available()&&!fishing.allowed_on_remote_server(),
-        "Auto Fishing is a verified local-only Player module");
+        fishing.available()&&fishing.allowed_on_remote_server(),
+        "Auto Fishing is a remote-capable ordinary-input Player module");
     auto_fishing_ready=false;
     GameplayModule navigation_hud(GameplayFeature::navigation_hud);
     utility::Module& navigation_settings_module=navigation_hud;

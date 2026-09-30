@@ -150,7 +150,7 @@ void auto_bridge_tick(void* player);
 void auto_fishing_tick(void* player);
 
 bool on(GameplayFeature feature) {
-    if(integration::server_safety::remote_session() && feature!=GameplayFeature::auto_leave&&feature!=GameplayFeature::esp&&feature!=GameplayFeature::chest_esp&&feature!=GameplayFeature::navigation_hud) return false;
+    if(integration::server_safety::remote_session() && feature!=GameplayFeature::auto_leave&&feature!=GameplayFeature::esp&&feature!=GameplayFeature::chest_esp&&feature!=GameplayFeature::navigation_hud&&feature!=GameplayFeature::auto_fishing) return false;
     if(integration::navigation_owns_controls.load() &&
        (feature==GameplayFeature::autotool||feature==GameplayFeature::phase||feature==GameplayFeature::airjump||
         feature==GameplayFeature::autosprint||feature==GameplayFeature::triggerbot||feature==GameplayFeature::jetpack||
@@ -945,7 +945,7 @@ bool fishing_button_down{};
 ULONGLONG fishing_button_time{};
 bool start_fishing_action(const char* action) {
     if(fishing_button_down)return false;
-    if(!controls_active()||integration::server_safety::remote_session())return false;
+    if(!controls_active())return false;
     if(!send_trigger_mouse(MOUSEEVENTF_RIGHTDOWN))return false;
     fishing_button_down=true;fishing_button_time=GetTickCount64();
     char message[96]{};std::snprintf(message,sizeof(message),"Auto Fishing dispatched guarded %s input.",action);
@@ -1055,18 +1055,17 @@ void auto_fishing_tick(void* player) {
     void* dimension{};camera_read(player,0x1C8,&dimension,sizeof(dimension));
     const bool enabled=on(GameplayFeature::auto_fishing);
     const bool foreground=controls_active();
-    const bool local=!integration::server_safety::remote_session();
     if(fishing_button_down) {
-        if(!enabled||!foreground||!local||
+        if(!enabled||!foreground||
            auto_fishing::click_release_due(fishing_button_time,now))release_fishing_mouse();
         return;
     }
-    const auto observed_selection=enabled&&foreground&&local&&dimension?selected_fishing_rod(player):RodSelection::unreadable;
+    const auto observed_selection=enabled&&foreground&&dimension?selected_fishing_rod(player):RodSelection::unreadable;
     if(observed_selection==RodSelection::fishing_rod)last_verified_rod=now;
     const auto selection=observed_selection==RodSelection::unreadable&&
         auto_fishing::rod_read_grace_active(last_verified_rod,now)
         ?RodSelection::fishing_rod:observed_selection;
-    if(enabled&&foreground&&local&&dimension&&selection!=previous_selection) {
+    if(enabled&&foreground&&dimension&&selection!=previous_selection) {
         Logger::instance().info(selection==RodSelection::fishing_rod
             ?"Auto Fishing selected fishing rod verified; automatic cycle armed."
             :selection==RodSelection::other
@@ -1078,7 +1077,7 @@ void auto_fishing_tick(void* player) {
     FishingHookSample hook{};
     if(rod)hook=fishing_hook_sample(player);
     const auto decision=controller.update(now,{
-        enabled,local,foreground,player&&dimension,rod,
+        enabled,foreground,player&&dimension,rod,
         hook.valid,hook.present,hook.id,hook.y});
     if(decision.reel)start_fishing_action("reel");
     else if(decision.cast)start_fishing_action("cast");
@@ -1371,7 +1370,7 @@ void initialize() {
         auto_bridge_ready=true;
         auto_fishing_ready=true;
         Logger::instance().info(release_12652?"Auto Bridge: 26.52 local tick connected; guarded input-assist candidate ready (V+W+Space, look down).":"Auto Bridge: 26.50 local tick connected; guarded input-assist candidate ready (V+W+Space, look down).");
-        Logger::instance().info(release_12652?"Auto Fishing: 26.52 local hook snapshots connected; guarded cast, bite detection, reel and recast ready.":"Auto Fishing: 26.50 local hook snapshots connected; guarded cast, bite detection, reel and recast ready.");
+        Logger::instance().info(release_12652?"Auto Fishing: 26.52 client hook snapshots connected; guarded cast, bite detection, reel and recast ready.":"Auto Fishing: 26.50 client hook snapshots connected; guarded cast, bite detection, reel and recast ready.");
         Logger::instance().info(release_12652?"ESP: 26.52 read-only packed snapshots connected to validated native local tick; waiting for local registry and camera validation. No native actor-list calls.":"ESP: 26.50 read-only packed snapshots connected to validated native local tick; waiting for local registry and camera validation. No native actor-list calls.");
         Logger::instance().info(release_12652?"Local chat display: exact 26.52 GuiData acquisition slot, display ABI/RVA, and cleanup verified.":"Local chat display: exact 26.50 GuiData acquisition slot, display ABI/RVA, and cleanup verified.");
         constexpr Byte leave_prologue[]{0x55,0x56,0x57,0x48,0x81,0xEC,0x00,0x01,0x00,0x00,0x48,0x8D,0xAC,0x24,0x80,0x00,0x00,0x00};
@@ -1476,7 +1475,7 @@ bool GameplayModule::available() const noexcept {
         (feature_!=GameplayFeature::airjump || airjump_ready.load()) && (feature_!=GameplayFeature::triggerbot ||
         (trigger_ready.load() && integration::game_context_detail::picker_ready.load()));
 }
-bool GameplayModule::allowed_on_remote_server() const noexcept { return feature_==GameplayFeature::auto_leave||feature_==GameplayFeature::esp||feature_==GameplayFeature::chest_esp||feature_==GameplayFeature::navigation_hud; }
+bool GameplayModule::allowed_on_remote_server() const noexcept { return feature_==GameplayFeature::auto_leave||feature_==GameplayFeature::esp||feature_==GameplayFeature::chest_esp||feature_==GameplayFeature::navigation_hud||feature_==GameplayFeature::auto_fishing; }
 void GameplayModule::on_register(EventBus&) { initialize(); }
 void GameplayModule::on_enable() { if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;Logger::instance().info("Trigger Bot enabled for local-world input delivery.");} if(feature_==GameplayFeature::auto_leave){++auto_leave_revision;Logger::instance().info("Auto Leave enabled.");} if(feature_==GameplayFeature::auto_bridge)Logger::instance().info("Auto Bridge enabled: keyboard V+W+Space or controller LB/RB/RT + left-stick-forward + A; look down."); if(feature_==GameplayFeature::auto_fishing){++auto_fishing_revision;Logger::instance().info("Auto Fishing enabled: hold a fishing rod and face open water; one guarded cast will start the cycle.");} flags[static_cast<unsigned>(feature_)]=true; }
 void GameplayModule::on_disable() { flags[static_cast<unsigned>(feature_)]=false; if(feature_==GameplayFeature::jetpack)++jetpack_revision; if(feature_==GameplayFeature::airjump)airjump_requests.reset(); if(feature_==GameplayFeature::triggerbot){++trigger_revision;release_trigger_mouse();Logger::instance().info("Trigger Bot disabled.");} if(feature_==GameplayFeature::auto_leave)++auto_leave_revision; if(feature_==GameplayFeature::auto_bridge)Logger::instance().info("Auto Bridge disabled."); if(feature_==GameplayFeature::auto_fishing){++auto_fishing_revision;release_fishing_mouse();Logger::instance().info("Auto Fishing disabled.");} }

@@ -29,7 +29,6 @@ inline constexpr unsigned max_cast_attempts = 3;
 
 struct Input {
     bool enabled{};
-    bool local_world{};
     bool foreground{};
     bool alive{};
     bool rod_selected{};
@@ -51,7 +50,7 @@ struct Decision {
 class Controller final {
 public:
     Decision update(std::uint64_t now, const Input& input) noexcept {
-        if (!input.enabled || !input.local_world || !input.foreground || !input.alive ||
+        if (!input.enabled || !input.foreground || !input.alive ||
             !input.rod_selected) {
             reset();
             return {};
