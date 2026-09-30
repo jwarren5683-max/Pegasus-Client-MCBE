@@ -30,8 +30,10 @@ int main() {
     controller.reset();
     require(controller.update(10,safe()).cast,"reset rearms initial cast");
     require(!controller.update(4000,safe()).cast,"failed cast times out without retry spam");
-    require(!controller.update(8000,safe()).cast,"timed-out controller remains stopped");
-    require(!controller.update(8100,safe(true,9,5.0F)).reel,"manual hook appearance rearms observation");
+    require(controller.update(5000,safe()).cast,"failed cast gets one delayed retry");
+    require(!controller.update(8000,safe()).cast,"second cast remains quiet until its timeout");
+    require(!controller.update(8501,safe()).cast,"second failed cast stops without a third retry");
+    require(!controller.update(9000,safe(true,9,5.0F)).reel,"manual hook appearance rearms observation");
 
     controller.reset();
     auto input=safe();input.local_world=false;

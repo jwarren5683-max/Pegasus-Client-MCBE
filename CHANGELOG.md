@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-09-29 — Auto Fishing retry hardening
+
+- Added one delayed retry when the game drops an initial cast input.
+- The controller still stops after the bounded retry, preventing repeated casts
+  when no hook is detected.
+
 ## 2026-09-29 — Auto Fishing input repair
 
 - Diagnosed the first in-world failure from the runtime log: cast and reel
