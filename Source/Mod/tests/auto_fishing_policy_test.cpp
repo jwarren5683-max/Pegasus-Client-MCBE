@@ -15,9 +15,12 @@ Input safe(bool hook=false,std::uint64_t id=0,float y=0.0F) {
 }
 
 int main() {
-    require(!click_release_due(100,144),"right-click remains held through the next frame");
-    require(click_release_due(100,145),"right-click releases after the minimum hold");
+    require(!click_release_due(100,209),"right-click remains held across multiple input ticks");
+    require(click_release_due(100,210),"right-click releases after the reliable hold");
     require(click_release_due(100,99),"clock rollback releases a held button");
+    require(rod_read_grace_active(100,1600),"temporary empty rod reads stay verified during use animation");
+    require(!rod_read_grace_active(100,1601),"rod-read grace expires promptly");
+    require(!rod_read_grace_active(100,99),"clock rollback cannot extend rod-read grace");
     Controller controller;
     require(controller.update(100,safe()).cast,"enable performs one initial cast");
     require(!controller.update(200,safe()).cast,"missing hook does not spam casts");
@@ -28,11 +31,21 @@ int main() {
     require(controller.update(1950,safe()).cast,"recast follows a completed reel");
 
     controller.reset();
+    require(controller.update(100,safe()).cast,"stuck-hook test performs initial cast");
+    require(!controller.update(200,safe(true,12,6.0F)).reel,"stuck-hook test observes hook");
+    require(!controller.update(1450,safe(true,12,5.98F)).reel,"stuck-hook test ignores normal bobbing");
+    require(controller.update(1500,safe(true,12,5.8F)).reel,"stuck-hook test detects bite");
+    require(!controller.update(3499,safe(true,12,5.8F)).cast,"lingering hook gets a bounded recovery window");
+    require(controller.update(3500,safe(true,12,5.8F)).cast,"lingering hook cannot stall the fishing cycle forever");
+
+    controller.reset();
     require(controller.update(10,safe()).cast,"reset rearms initial cast");
-    require(!controller.update(4000,safe()).cast,"failed cast times out without retry spam");
-    require(controller.update(5000,safe()).cast,"failed cast gets one delayed retry");
-    require(!controller.update(8000,safe()).cast,"second cast remains quiet until its timeout");
-    require(!controller.update(8501,safe()).cast,"second failed cast stops without a third retry");
+    require(!controller.update(2511,safe()).cast,"failed cast enters a quiet retry delay");
+    require(!controller.update(3110,safe()).cast,"failed cast does not retry early");
+    require(controller.update(3111,safe()).cast,"failed cast gets a prompt delayed retry");
+    require(!controller.update(5612,safe()).cast,"second failed cast enters another bounded delay");
+    require(controller.update(6212,safe()).cast,"second missed input gets the final retry");
+    require(!controller.update(8713,safe()).cast,"third failed cast stops without input spam");
     require(!controller.update(9000,safe(true,9,5.0F)).reel,"manual hook appearance rearms observation");
 
     controller.reset();

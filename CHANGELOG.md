@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-09-29 — Auto Fishing cycle recovery
+
+- Increased the guarded right-click hold so casts cross multiple Bedrock input ticks.
+- Added prompt, strictly bounded retries for dropped cast input.
+- Debounced the temporary empty-stack state produced while using a fishing rod.
+- Added recovery when a reeled fishing-hook entity lingers instead of disappearing.
+
 ## 2026-09-29 — Auto Fishing retry hardening
 
 - Added one delayed retry when the game drops an initial cast input.

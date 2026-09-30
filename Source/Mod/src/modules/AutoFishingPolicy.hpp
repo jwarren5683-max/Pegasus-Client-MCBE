@@ -8,15 +8,23 @@ namespace utility::modules::auto_fishing {
 inline constexpr std::uint64_t minimum_hook_age_ms = 1200;
 inline constexpr std::uint64_t maximum_sample_gap_ms = 250;
 inline constexpr std::uint64_t recast_delay_ms = 350;
-inline constexpr std::uint64_t cast_timeout_ms = 3500;
-inline constexpr std::uint64_t cast_retry_delay_ms = 1000;
-inline constexpr std::uint64_t click_hold_ms = 45;
+inline constexpr std::uint64_t cast_timeout_ms = 2500;
+inline constexpr std::uint64_t cast_retry_delay_ms = 600;
+inline constexpr std::uint64_t reel_recovery_timeout_ms = 2000;
+inline constexpr std::uint64_t rod_read_grace_ms = 1500;
+inline constexpr std::uint64_t click_hold_ms = 110;
 inline constexpr float bite_drop_blocks = 0.08F;
-inline constexpr unsigned max_cast_attempts = 2;
+inline constexpr unsigned max_cast_attempts = 3;
 
 [[nodiscard]] constexpr bool click_release_due(std::uint64_t started,
                                                 std::uint64_t now) noexcept {
     return now < started || now - started >= click_hold_ms;
+}
+
+[[nodiscard]] constexpr bool rod_read_grace_active(std::uint64_t last_verified,
+                                                    std::uint64_t now) noexcept {
+    return last_verified && now >= last_verified &&
+           now - last_verified <= rod_read_grace_ms;
 }
 
 struct Input {
@@ -86,7 +94,19 @@ public:
         }
 
         missing_since_ = 0;
-        if (phase_ == Phase::waiting_for_disappear) return {};
+        if (phase_ == Phase::waiting_for_disappear) {
+            if (now < action_time_) {
+                reset();
+                return {};
+            }
+            if (now - action_time_ >= reel_recovery_timeout_ms) {
+                phase_ = Phase::waiting_for_hook;
+                action_time_ = now;
+                cast_attempts_ = 1;
+                return {.cast = true};
+            }
+            return {};
+        }
         if (phase_ == Phase::idle || phase_ == Phase::waiting_for_hook ||
             phase_ == Phase::stopped || hook_id_ != input.hook_id) {
             phase_ = Phase::watching;

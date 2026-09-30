@@ -1041,14 +1041,16 @@ RodSelection selected_fishing_rod(void* player) noexcept {
         const auto stack=reinterpret_cast<std::uintptr_t(__fastcall*)(std::uintptr_t,int)>(getter)(inventory,static_cast<int>(selected));
         integration::navigation_native::NativeStack held;
         if(!stack||!integration::navigation_native::capture_stack(stack,held)||!held.valid)return RodSelection::unreadable;
-        return held.count>0&&std::string_view(held.identifier)=="minecraft:fishing_rod"
+        if(held.count<=0)return RodSelection::unreadable;
+        return std::string_view(held.identifier)=="minecraft:fishing_rod"
             ?RodSelection::fishing_rod:RodSelection::other;
     }__except(EXCEPTION_EXECUTE_HANDLER){return RodSelection::unreadable;}
 }
 void auto_fishing_tick(void* player) {
     static auto_fishing::Controller controller;static unsigned revision{};static RodSelection previous_selection=RodSelection::unreadable;
+    static ULONGLONG last_verified_rod{};
     const auto current_revision=auto_fishing_revision.load();
-    if(revision!=current_revision){controller.reset();revision=current_revision;previous_selection=RodSelection::unreadable;}
+    if(revision!=current_revision){controller.reset();revision=current_revision;previous_selection=RodSelection::unreadable;last_verified_rod=0;}
     const auto now=GetTickCount64();
     void* dimension{};camera_read(player,0x1C8,&dimension,sizeof(dimension));
     const bool enabled=on(GameplayFeature::auto_fishing);
@@ -1059,7 +1061,11 @@ void auto_fishing_tick(void* player) {
            auto_fishing::click_release_due(fishing_button_time,now))release_fishing_mouse();
         return;
     }
-    const auto selection=enabled&&foreground&&local&&dimension?selected_fishing_rod(player):RodSelection::unreadable;
+    const auto observed_selection=enabled&&foreground&&local&&dimension?selected_fishing_rod(player):RodSelection::unreadable;
+    if(observed_selection==RodSelection::fishing_rod)last_verified_rod=now;
+    const auto selection=observed_selection==RodSelection::unreadable&&
+        auto_fishing::rod_read_grace_active(last_verified_rod,now)
+        ?RodSelection::fishing_rod:observed_selection;
     if(enabled&&foreground&&local&&dimension&&selection!=previous_selection) {
         Logger::instance().info(selection==RodSelection::fishing_rod
             ?"Auto Fishing selected fishing rod verified; automatic cycle armed."
