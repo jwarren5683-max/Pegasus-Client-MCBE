@@ -6,6 +6,7 @@
 #include "../integration/CompatibilityProbe.hpp"
 #include "../integration/GameContext.hpp"
 #include "../integration/WorldSeed.hpp"
+#include "../integration/XpCommand12652.hpp"
 #include "../modules/AntiKnockbackModule.hpp"
 #include "../modules/CriticalsModule.hpp"
 #include "../modules/XrayModule.hpp"
@@ -90,10 +91,20 @@ bool Framework::initialize(HMODULE module) noexcept {
         Logger::instance().info("Menu overlay initialization failed.");
     }
     modules_.commands().set_eject_handler([this]{return request_eject();});
+    modules_.commands().set_xp_request_handler([](int amount,bool levels){
+        using NativeResult=integration::xp_12652::RequestResult;
+        using CommandResult=Commands::XpRequestResult;
+        switch(integration::xp_12652::request(amount,levels)){
+        case NativeResult::queued:return CommandResult::queued;
+        case NativeResult::busy:return CommandResult::busy;
+        default:return CommandResult::unavailable;
+        }
+    });
     Logger::instance().info(integration::install_chat_commands(modules_)
-        ? "Local period commands installed: .help, .loki, .seed, .binds, .copy, .keybind, .unbind and .eject."
+        ? "Local period commands installed: .help, .loki, .seed, .xp, .binds, .copy, .keybind, .unbind and .eject."
         : "Local commands unavailable: unsupported chat signature or hook installation failed.");
     integration::reset_world_seed();
+    integration::xp_12652::reset();
     modules::arm_startup_notice();
     return true;
 }
@@ -105,6 +116,7 @@ void Framework::shutdown() noexcept {
 
     modules::disarm_startup_notice();
     integration::reset_world_seed();
+    integration::xp_12652::reset();
     integration::stop_chat_commands(true);
     integration::clear_game_context();
     renderer_.shutdown();

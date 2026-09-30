@@ -126,6 +126,15 @@ bool current_coordinates_text(std::string& text) {
     return true;
 }
 constexpr auto usage = "Usage: .keybind <module> <key> <toggle|keyhold> (quote names containing spaces).";
+bool parse_xp_amount(std::string_view text,int& amount,bool& levels) {
+    if(text.empty())return false;
+    levels=text.back()=='l'||text.back()=='L';
+    if(levels){text.remove_suffix(1);if(text.empty())return false;}
+    bool positive=false;
+    if(text.front()=='+'){positive=true;text.remove_prefix(1);if(text.empty())return false;}
+    const auto result=std::from_chars(text.data(),text.data()+text.size(),amount);
+    return result.ec==std::errc{}&&result.ptr==text.data()+text.size()&&(!positive||amount>=0);
+}
 }
 bool Commands::execute(std::string_view text, ModuleManager& modules, std::vector<std::string>& replies) {
     if (text.empty() || text.front() != Commands::prefix) return false;
@@ -151,6 +160,7 @@ bool Commands::execute(std::string_view text, ModuleManager& modules, std::vecto
             replies.emplace_back(std::string(chat_style::aqua)+".help"+chat_style::gray+" - Show commands.");
             replies.emplace_back(std::string(chat_style::aqua)+".loki"+chat_style::gray+" - Show Loki version and confirmed features.");
             replies.emplace_back(std::string(chat_style::aqua)+".seed"+chat_style::gray+" - Show the current world/server seed supplied to this client.");
+            replies.emplace_back(std::string(chat_style::aqua)+".xp "+chat_style::white+"<amount>[L]"+chat_style::gray+" - Add XP points or levels in a local world.");
             replies.emplace_back(std::string(chat_style::aqua)+".keybind "+chat_style::white+"<module> <key> <toggle|keyhold>"+chat_style::gray+" - Bind a module; quote spaced names.");
             replies.emplace_back(std::string(chat_style::aqua)+".unbind "+chat_style::white+"<module>"+chat_style::gray+" - Remove all key bindings for a module.");
             replies.emplace_back(std::string(chat_style::aqua)+".binds"+chat_style::gray+" - List current Loki key bindings.");
@@ -164,7 +174,7 @@ bool Commands::execute(std::string_view text, ModuleManager& modules, std::vecto
     }
     if (name == "loki") {
         if (args.size()!=1) { replies.emplace_back("Usage: .loki (no arguments)."); return true; }
-        replies.emplace_back(std::string(chat_style::green)+"Loki"+chat_style::gray+" | Minecraft 26.52");
+        replies.emplace_back(std::string(chat_style::green)+"Loki 2.3 XP Test"+chat_style::gray+" | Minecraft 26.52");
         replies.emplace_back(std::string(chat_style::gray)+"Confirmed: "+chat_style::aqua+
             "Reach, Block Reach, X-Ray, Fullbright, ESP, ChestESP, Auto Leave, Auto Bridge, Auto Fishing");
         return true;
@@ -177,6 +187,23 @@ bool Commands::execute(std::string_view text, ModuleManager& modules, std::vecto
             return true;
         }
         replies.emplace_back(std::string(chat_style::green)+"World Seed: "+chat_style::white+std::to_string(seed));
+        return true;
+    }
+    if(name=="xp") {
+        if(args.size()!=2){replies.emplace_back("Usage: .xp <amount>[L] (append L for levels).");return true;}
+        int amount{};bool levels{};
+        if(!parse_xp_amount(args[1],amount,levels)){
+            replies.emplace_back("Invalid XP amount. Use a signed whole number, optionally followed by L.");return true;
+        }
+        XpRequestHandler handler;
+        {std::lock_guard lock(mutex_);handler=xp_request_handler_;}
+        const auto result=handler?handler(amount,levels):XpRequestResult::unavailable;
+        if(result==XpRequestResult::queued)
+            replies.emplace_back(std::string(chat_style::green)+"XP change queued: "+chat_style::white+
+                std::to_string(amount)+(levels?" levels.":" points."));
+        else if(result==XpRequestResult::busy)
+            replies.emplace_back(std::string(chat_style::yellow)+"An XP change is already queued.");
+        else replies.emplace_back("XP changes are only available in a local world on Minecraft 26.52.");
         return true;
     }
     if (name == "binds") {
@@ -297,6 +324,9 @@ void Commands::set_clipboard_writer(std::function<bool(std::string_view)> writer
     std::lock_guard lock(mutex_);
     clipboard_writer_=std::move(writer);
 }
+void Commands::set_xp_request_handler(XpRequestHandler handler) {
+    std::lock_guard lock(mutex_);xp_request_handler_=std::move(handler);
+}
 void Commands::key(unsigned code, bool down, bool gameplay) {
     if (code >= pressed_.size()) return;
     std::lock_guard lock(mutex_);
@@ -319,6 +349,6 @@ void Commands::suspend() {
 }
 void Commands::clear() {
     suspend();
-    std::lock_guard lock(mutex_); bindings_.clear(); pressed_.fill(false); eject_handler_={}; clipboard_writer_={}; eject_pending_=false;
+    std::lock_guard lock(mutex_); bindings_.clear(); pressed_.fill(false); eject_handler_={}; clipboard_writer_={}; xp_request_handler_={}; eject_pending_=false;
 }
 }

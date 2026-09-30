@@ -11,12 +11,15 @@ class Module;
 class ModuleManager;
 class Commands final {
 public:
+    enum class XpRequestResult { queued, unavailable, busy };
+    using XpRequestHandler = std::function<XpRequestResult(int,bool)>;
     static constexpr char prefix = '.';
     // true always means consume locally, including invalid local commands.
     bool execute(std::string_view text, ModuleManager& modules, std::vector<std::string>& replies);
     // The handler only schedules shutdown; it must not destroy modules inline.
     void set_eject_handler(std::function<bool()> handler);
     void set_clipboard_writer(std::function<bool(std::string_view)> writer);
+    void set_xp_request_handler(XpRequestHandler handler);
     void key(unsigned key, bool down, bool gameplay);
     void suspend();
     void clear();
@@ -25,6 +28,7 @@ private:
     std::mutex mutex_;
     std::function<bool()> eject_handler_;
     std::function<bool(std::string_view)> clipboard_writer_;
+    XpRequestHandler xp_request_handler_;
     bool eject_pending_{};
     std::vector<Binding> bindings_;
     std::array<bool, 256> pressed_{};

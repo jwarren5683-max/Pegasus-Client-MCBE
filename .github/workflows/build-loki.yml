@@ -89,7 +89,7 @@ jobs:
       - name: Upload downloadable build
         uses: actions/upload-artifact@v4
         with:
-          name: Loki-2.2-Windows-x64-${{ github.sha }}
+          name: Loki-2.3-XP-Test-Windows-x64-${{ github.sha }}
           path: artifact/Loki
           if-no-files-found: error
           retention-days: 14

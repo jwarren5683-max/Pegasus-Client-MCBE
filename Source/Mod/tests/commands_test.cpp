@@ -47,12 +47,12 @@ int main() {
         require(!commands.execute(" .help",modules,ordinary),"only leading period is a command");
         require(!commands.execute(",help",modules,ordinary),"legacy comma prefix is still consumed");
         const auto help=execute(".help");
-        require(help.size()==8,"help must contain exactly one row per command");
-        require(help[0].starts_with(".help") && help[1].starts_with(".loki") && help[2].starts_with(".seed") && help[3].starts_with(".keybind") && help[4].starts_with(".unbind") && help[5].starts_with(".binds") && help[6].starts_with(".copy") && help[7].starts_with(".eject"),"help registry");
+        require(help.size()==9,"help must contain exactly one row per command");
+        require(help[0].starts_with(".help") && help[1].starts_with(".loki") && help[2].starts_with(".seed") && help[3].starts_with(".xp") && help[4].starts_with(".keybind") && help[5].starts_with(".unbind") && help[6].starts_with(".binds") && help[7].starts_with(".copy") && help[8].starts_with(".eject"),"help registry");
         for (const auto& line:help) require(line.find('\n')==std::string::npos && line.size()<140,"help must stay concise");
         const auto loki=execute(".loki");
         require(loki.size()==2,"loki command must return two lines");
-        require(loki[0]=="Loki | Minecraft 26.52","loki build line");
+        require(loki[0]=="Loki 2.3 XP Test | Minecraft 26.52","loki build line");
         require(loki[1]=="Confirmed: Reach, Block Reach, X-Ray, Fullbright, ESP, ChestESP, Auto Leave, Auto Bridge, Auto Fishing","loki feature line");
         require(execute(".loki extra")[0].starts_with("Usage: .loki"),"loki arity");
         integration::reset_world_seed();
@@ -65,6 +65,23 @@ int main() {
         require(execute(".seed")[0]=="World Seed: -1","signed world seed");
         require(execute(".seed extra")[0].starts_with("Usage: .seed"),"seed arity");
         integration::reset_world_seed();
+        std::vector<std::pair<int,bool>> xp_requests;
+        commands.set_xp_request_handler([&](int amount,bool levels){
+            xp_requests.emplace_back(amount,levels);return Commands::XpRequestResult::queued;
+        });
+        require(execute(".xp 25")[0]=="XP change queued: 25 points."&&xp_requests.back()==std::pair{25,false},"xp points");
+        require(execute(".XP -3L")[0]=="XP change queued: -3 levels."&&xp_requests.back()==std::pair{-3,true},"xp levels");
+        require(execute(".xp +4l")[0]=="XP change queued: 4 levels."&&xp_requests.back()==std::pair{4,true},"xp plus sign");
+        const auto xp_count=xp_requests.size();
+        require(execute(".xp")[0].starts_with("Usage:")&&execute(".xp 1 2")[0].starts_with("Usage:"),"xp arity");
+        require(execute(".xp ")[0].starts_with("Usage:"),"xp blank amount");
+        for(const auto invalid:{"L","+L","1.5","12LL","999999999999999999999"})
+            require(execute(std::string(".xp ")+invalid)[0].find("Invalid")!=std::string::npos,"xp invalid amount");
+        require(xp_requests.size()==xp_count,"invalid xp reached native handler");
+        commands.set_xp_request_handler([](int,bool){return Commands::XpRequestResult::busy;});
+        require(execute(".xp 1")[0].find("already queued")!=std::string::npos,"xp busy feedback");
+        commands.set_xp_request_handler([](int,bool){return Commands::XpRequestResult::unavailable;});
+        require(execute(".xp 1")[0].find("local world")!=std::string::npos,"xp unavailable feedback");
         std::vector<std::string> clipboard;
         commands.set_clipboard_writer([&](std::string_view text){clipboard.emplace_back(text);return true;});
         require(execute(".copy")[0].starts_with("Usage: .copy"),"copy arity");
@@ -192,7 +209,7 @@ int main() {
         };
         submit("normal message");submit("/help");submit("hello, world");submit(" .help");
         require(sent==std::vector<std::string>({"normal message","/help","hello, world"," .help"}),"normal native chat changed");
-        submit(".help");submit(".loki");submit(".seed");submit(".binds");submit(".copy binds");submit(".keybind \"Test Module\" G toggle");submit(".unknown");submit(".");submit(".help extra");
+        submit(".help");submit(".loki");submit(".seed");submit(".xp 5L");submit(".binds");submit(".copy binds");submit(".keybind \"Test Module\" G toggle");submit(".unknown");submit(".");submit(".help extra");
         submit(".keybind \"Test Module\" G bad");submit("."+std::string(33000,'x'));
         submit(".unbind \"Test Module\"");submit(".unbind Missing");submit(".unbind");
         require(sent.size()==4,"command leaked into native sender");require(displayed.size()>=7,"missing local feedback");

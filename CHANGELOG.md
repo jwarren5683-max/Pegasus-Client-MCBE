@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-30 — Loki 2.3 XP test
+
+- Added `.xp <amount>[L]`, following the established Horion behavior: a plain
+  amount changes XP points and an `L` suffix changes levels.
+- Revalidated the implementation against Minecraft `1.26.5203.0`: the native
+  XP command identifies `Player::addExperience` at vtable slot `0x6B8` and
+  `Player::addLevels` at `0x6C0`. Loki checks the exact command-dispatch bytes
+  before using either slot.
+- Queue XP changes from chat and execute them once on the integrated server's
+  authoritative player tick. Remote servers, unsupported builds, stale player
+  objects, altered signatures, and non-executable method targets fail closed.
+- Kept Loki 2.2 on `main` unchanged; this build is isolated on the 2.3 XP test
+  branch.
+
 ## 2026-09-29 — Remote Auto Fishing
 
 - Allowed Auto Fishing in remote worlds while retaining foreground, selected-rod,
