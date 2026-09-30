@@ -160,7 +160,7 @@ bool Commands::execute(std::string_view text, ModuleManager& modules, std::vecto
             replies.emplace_back(std::string(chat_style::aqua)+".help"+chat_style::gray+" - Show commands.");
             replies.emplace_back(std::string(chat_style::aqua)+".loki"+chat_style::gray+" - Show Loki version and confirmed features.");
             replies.emplace_back(std::string(chat_style::aqua)+".seed"+chat_style::gray+" - Show the current world/server seed supplied to this client.");
-            replies.emplace_back(std::string(chat_style::aqua)+".xp "+chat_style::white+"<amount>[L]"+chat_style::gray+" - Add XP points or levels in a local world.");
+            replies.emplace_back(std::string(chat_style::aqua)+".xp "+chat_style::white+"<amount>[L]"+chat_style::gray+" - Add XP points or levels.");
             replies.emplace_back(std::string(chat_style::aqua)+".keybind "+chat_style::white+"<module> <key> <toggle|keyhold>"+chat_style::gray+" - Bind a module; quote spaced names.");
             replies.emplace_back(std::string(chat_style::aqua)+".unbind "+chat_style::white+"<module>"+chat_style::gray+" - Remove all key bindings for a module.");
             replies.emplace_back(std::string(chat_style::aqua)+".binds"+chat_style::gray+" - List current Loki key bindings.");

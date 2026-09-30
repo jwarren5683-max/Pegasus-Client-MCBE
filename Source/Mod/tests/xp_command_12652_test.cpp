@@ -12,11 +12,12 @@ void require(bool condition,const char* message){if(!condition)throw std::runtim
 
 int main(){
     try{
-        auto bytes=command_dispatch_signature;
-        require(dispatch_signature_matches(bytes.data()),"verified 26.52 XP dispatch signature rejected");
+        auto bytes=add_experience_signature;
+        require(signature_matches(bytes.data(),add_experience_signature),"verified 26.52 addExperience signature rejected");
         bytes[7]^=std::byte{1};
-        require(!dispatch_signature_matches(bytes.data()),"changed XP dispatch signature accepted");
+        require(!signature_matches(bytes.data(),add_experience_signature),"changed addExperience signature accepted");
+        require(signature_matches(add_levels_signature.data(),add_levels_signature),"verified 26.52 addLevels signature rejected");
         require(apply(nullptr,7,true)==ApplyResult::unavailable,"non-Bedrock test host accepted XP request");
-        std::cout<<"XP 26.52 dispatch evidence and compatibility validation passed.\n";
+        std::cout<<"Horion-style XP 26.52 Player method evidence and compatibility validation passed.\n";
     }catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}
 }

@@ -21,7 +21,7 @@ Minecraft `1.26.5203.0` (Bedrock 26.52) is recognized by an exact executable pro
 - You can type '.help' in the chat while the client is loaded in your game and it will show you some commands the client provides.
 - Type '.loki' to show the current Loki build and the features confirmed working on 26.52.
 - Type '.seed' to show the signed 64-bit seed currently exposed to the client. Remote servers may expose `0` or another server-provided value.
-- Type `.xp 25` to add XP points or `.xp 5L` to add XP levels. Negative values remove XP. Like Horion's command, it invokes the current player's native XP method directly; an authoritative remote server may replace or reject client-side changes.
+- Type `.xp 25` to add XP points or `.xp 5L` to add XP levels. Negative values remove XP. This follows Horion's direct `LocalPlayer::addExperience` / `addLevels` design, adapted for 26.52 by calling the real inherited Player implementations because the modern LocalPlayer virtual overrides are empty stubs. An authoritative remote server may still replace or reject client-side changes.
 - Type '.binds' to list the Loki modules currently assigned to keys and whether each binding is toggle or keyhold.
 - Use '.copy seed', '.copy coords', or '.copy binds' to place that Loki information directly on the Windows clipboard.
 - Loki displays `[Loki] Loaded` once after the local player and 26.52 chat UI are ready. The chat submit target, controller/input layout, `GuiData` acquisition, display ABI/RVA, and native reference cleanup are exact-build gated.

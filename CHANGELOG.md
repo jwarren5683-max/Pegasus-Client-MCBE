@@ -12,6 +12,10 @@
   No local-world policy gate, artificial amount cap, cooldown, or pending-request
   limit is applied. Exact-build, native-method, and player-pointer validation
   remain because they are required for 26.52 compatibility and crash prevention.
+- Fixed the 26.52 compatibility mapping: the LocalPlayer XP vtable entries used
+  by old Horion are now empty return stubs. Loki now calls the real inherited
+  `Player::addExperience` / `Player::addLevels` implementations used by the
+  native XP command instead of reporting success after a no-op virtual call.
 - Kept Loki 2.2 on `main` unchanged; this build is isolated on the 2.3 XP test
   branch.
 
